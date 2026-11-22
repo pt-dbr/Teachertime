@@ -111,9 +111,30 @@ function slotDetails(slot) {
 function dayAdjustments(key, db = data) {
   return (db.adjustments ?? []).filter(change => change.day === key);
 }
+function scheduleAt(key, db = data) {
+  return (db.scheduleStarts ?? []).reduce((latest,start) => start <= key && start > latest ? start : latest,'');
+}
+function newSchedule() {
+  const today = dateKey(new Date());
+  edit('Neuer Stundenplan',`<p>Ab dem gewählten Datum beginnt ein leerer Wochenplan. Einmalige Termine und erfasste Zeiten bleiben gespeichert.</p>
+    <label>Gültig ab <input name="effective" type="date" min="${today}" value="${today}" required></label>`, values => {
+    const effective = values.get('effective');
+    if (!isDate(effective) || effective < today) throw new Error('Wähle heute oder ein zukünftiges Datum.');
+    if ((data.scheduleStarts ?? []).includes(effective)) throw new Error('Für dieses Datum gibt es bereits einen Stundenplan. Wähle das Datum im Wochenplan, um ihn zu bearbeiten.');
+    if (!save(db => {
+      db.scheduleStarts = [...new Set([...(db.scheduleStarts ?? []),effective])].sort();
+    })) return false;
+    date = effective;
+    render();
+    note('Stundenplan ab '+dateLabel(dayStart(effective))+' geöffnet.');
+    return true;
+  });
+}
 function datedSlots(key, db = data) {
-  const weekday = dayStart(key).getDay();
-  return db.slots.filter(slot => slot.weekly ? Number(slot.day) === weekday : slot.day === key);
+  const weekday = dayStart(key).getDay(), version = scheduleAt(key,db);
+  return db.slots.filter(slot => slot.weekly
+    ? Number(slot.day) === weekday && (slot.scheduleFrom ?? '') === version
+    : slot.day === key);
 }
 function mondayFor(key) {
   const d = dayStart(key);
@@ -451,12 +472,15 @@ function workCell(value) {
   editor.querySelector('.primary').hidden = true;
 }
 function planView() {
-  const weekly = data.slots.filter(slot => slot.weekly);
+  const week = mondayFor(date);
+  const weekly = schoolDays.flatMap((_,index) => datedSlots(dateKey(offsetDay(week,index))).filter(slot => slot.weekly));
+  const from = scheduleAt(date);
   const custom = weekly.filter(slot => slot.day < 1 || slot.day > 5 || !morning.some(block => block[1] === slot.start));
   const single = data.slots.filter(s => !s.weekly).sort((a,b) => (a.day+a.start).localeCompare(b.day+b.start));
   const rows = items => items.map(s => `<div class="row"><div><strong>${escape(s.title || label(s))}</strong><small>${s.weekly ? weekdays[s.day] : dateLabel(dayStart(s.day))} · ${s.start}–${s.end} · ${escape(label(s))}</small></div>${button('Bearbeiten','slot',s.id)}</div>`).join('');
-  return heading('Stundenplan',button('CSV importieren','csv')+button('+ Termin','slot','','primary'))+
-    `<section class="week-card"><h2 class="section-title">Vormittagsplan</h2><div class="actions section-title">${button('Vorige Woche','weekStep','-7')}${dateInput()}${button('Nächste Woche','weekStep','7')}</div>
+  return heading('Stundenplan',button('CSV importieren','csv')+button('Neuer Stundenplan','newSchedule')+button('+ Termin','slot','','primary'))+
+    `<section class="week-card"><h2 class="section-title">Vormittagsplan</h2>
+    ${from ? `<p class="muted section-title">Stundenplan gültig ab ${dateLabel(dayStart(from))}</p>` : ''}<div class="actions section-title">${button('Vorige Woche','weekStep','-7')}${dateInput()}${button('Nächste Woche','weekStep','7')}</div>
     ${weeklyGrid()}</section>${balanceView()}
     <section class="week-card"><div class="head"><h2>Arbeitszeitraster</h2><div class="actions">
         <label>Uhrzeit <select id="workBand">${options(bands.map(item => item[0]),band)}</select></label></div></div>
@@ -606,6 +630,10 @@ function slotEditor(slotId, cell) {
     const repeats = values.has('weekly');
     return save(db => {
       const updated = {id:slotId || id(),kind:values.get('kind'),...details(values,values.get('kind')),title:values.get('title').trim(),weekly:repeats,day:repeats ? weekdays.indexOf(values.get('weekday')) : values.get('date'),start:values.get('start'),end:values.get('end')};
+      if (repeats) {
+        const version = slot?.weekly ? slot.scheduleFrom : scheduleAt(cell?.key ?? date,db);
+        if (version) updated.scheduleFrom = version;
+      }
       db.slots = [...db.slots.filter(s => s.id !== updated.id), updated];
     });
   }, slot ? button('Löschen','deleteSlot',slot.id,'danger') : '');
@@ -667,14 +695,16 @@ function isDate(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && dateKey(dayStart(value)) === value;
 }
 function csvImport() {
+  const targetDate = date;
   edit('Stundenplan importieren', '<p>UTF-8, Semikolon als Trennzeichen. Beispiel: Mo;08:00;08:45;Unterricht;Mathematik 7b</p><label>CSV-Datei <input name="file" type="file" accept=".csv,.txt,text/plain,text/csv"></label><label>Oder CSV-Text einfügen <textarea name="csv" rows="5"></textarea></label>', async values => {
     const file = values.get('file');
     const rows = csvRows(file.size ? await file.text() : values.get('csv'));
     return save(db => {
+      const version = scheduleAt(targetDate,db);
       for (const row of rows) {
-        const same = s => s.weekly && s.day === row.day && s.start === row.start && s.end === row.end &&
+        const same = s => s.weekly && (s.scheduleFrom ?? '') === version && s.day === row.day && s.start === row.start && s.end === row.end &&
           s.title === row.title && s.kind === row.kind && s.conferenceType === row.conferenceType;
-        if (!db.slots.some(same)) db.slots.push(row);
+        if (!db.slots.some(same)) db.slots.push(version ? {...row,scheduleFrom:version} : row);
       }
     });
   });
@@ -697,7 +727,7 @@ function restore() {
     catch { throw new Error('Die Datei enthält keine lesbare Sicherung.'); }
     if (!validBackup(backup)) throw new Error('Die Datei ist keine gültige Lehrzeit-Sicherung.');
     if (!confirm('Aktuelle Daten durch diese Sicherung ersetzen?')) return false;
-    return save(db => { db.entries = backup.entries; db.slots = backup.slots; db.school = backup.school; db.adjustments = backup.adjustments ?? []; });
+    return save(db => { db.entries = backup.entries; db.slots = backup.slots; db.school = backup.school; db.adjustments = backup.adjustments ?? []; db.scheduleStarts = backup.scheduleStarts ?? []; });
   });
 }
 function validBackup(db) {
@@ -714,6 +744,9 @@ function validBackup(db) {
     && (e.slot === null || typeof e.slot === 'string'))) return false;
   if (!db.slots.every(s => hasIdTitle(s) && validDetails(s) && activities.includes(s.kind) && isTime(s.start) && isTime(s.end) &&
     s.end > s.start && typeof s.weekly === 'boolean' && (s.weekly ? Number.isInteger(s.day) && s.day >= 0 && s.day <= 6 : isDate(s.day)))) return false;
+  const starts = db.scheduleStarts ?? [];
+  if (!Array.isArray(starts) || !starts.every(isDate) || new Set(starts).size !== starts.length) return false;
+  if (db.slots.some(slot => slot.scheduleFrom !== undefined && (!slot.weekly || !starts.includes(slot.scheduleFrom)))) return false;
   if (db.adjustments !== undefined && (!Array.isArray(db.adjustments) || !db.adjustments.every(change =>
     change && isDate(change.day) && hasIdTitle(change.slot) && change.slot.kind === 'Unterricht' &&
     isTime(change.slot.start) && isTime(change.slot.end) && change.slot.end > change.slot.start &&
@@ -827,6 +860,7 @@ document.addEventListener('click', event => {
     case 'deleteSlot': deleteItem('slots',value); break;
     case 'close': dialog.close(); break;
     case 'csv': csvImport(); break;
+    case 'newSchedule': newSchedule(); break;
     case 'export': exportBackup(); break;
     case 'restore': restore(); break;
     case 'school':
@@ -858,5 +892,17 @@ setInterval(updateClock,1000);
 render();
 checkSchool();
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(() => note('Offline-Modus ist hier nicht verfügbar.'));
+  const workers = navigator.serviceWorker;
+  let controller = workers.controller;
+  workers.addEventListener('controllerchange', () => {
+    if (controller && workers.controller) note('Lehrzeit wurde aktualisiert. Öffne die App nach dem Speichern erneut.');
+    controller = workers.controller;
+  });
+  workers.register('./sw.js',{updateViaCache:'none'}).then(registration => {
+    const checkUpdate = () => {
+      if (!document.hidden && navigator.onLine) registration.update().catch(() => {});
+    };
+    document.addEventListener('visibilitychange',checkUpdate);
+    checkUpdate();
+  }).catch(() => note('Offline-Modus ist hier nicht verfügbar.'));
 }

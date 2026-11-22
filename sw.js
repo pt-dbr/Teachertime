@@ -1,7 +1,10 @@
-const cacheName = 'lehrzeit-v6-' + self.registration.scope;
+const cacheName = 'lehrzeit-v8-' + self.registration.scope;
 const assets = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './icon.png'];
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(assets.map(asset => new Request(new URL(asset,self.registration.scope),{cache:'reload'})))));
+  const requests = assets.map(asset => new Request(new URL(asset,self.registration.scope),{cache:'reload'}));
+  event.waitUntil(caches.open(cacheName)
+    .then(cache => cache.addAll(requests))
+    .then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', event => {
   event.waitUntil(self.clients.claim());
