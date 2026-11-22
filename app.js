@@ -242,8 +242,8 @@ const morning = [
 const bands = [['00:00–06:00',0,360],['06:00–14:00',360,840],
   ['14:00–20:00',840,1200],['20:00–24:00',1200,1440]];
 let band = bands[1][0];
-function gridTable(name, columns, rows) {
-  return `<div class="week-scroll" tabindex="0" aria-label="${name}"><table class="week-grid">
+function gridTable(name, columns, rows, tableClass = '') {
+  return `<div class="week-scroll" tabindex="0" aria-label="${name}"><table class="week-grid${tableClass ? ' '+tableClass : ''}">
     <thead><tr><th scope="col">Zeit</th>${columns.map(column => `<th scope="col">${column}</th>`).join('')}</tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
@@ -365,7 +365,7 @@ main.addEventListener('pointerdown', event => {
   suppressGridClick = false;
   const cell = event.target.closest('[data-work-day]');
   const control = event.target.closest('button');
-  if (!cell || (control && control.dataset.action !== 'workCell')) return;
+  if (!cell || cell.classList.contains('work-colored') || (control && control.dataset.action !== 'workCell')) return;
   const key = cell.dataset.workDay;
   gridDrag = {origin:cell,key,first:Number(cell.dataset.workMinute),pointerId:event.pointerId,
     cells:cell.closest('table').querySelectorAll('[data-work-day="'+key+'"]'), moved:false};
@@ -483,12 +483,12 @@ function workGrid() {
       }
       const edges = background ? ' work-colored '+background+(continuesAfter ? ' record-after' : '') : '';
       return `<td class="work-cell${edges}" data-work-day="${key}" data-work-minute="${minute}">${blocks.join('')}
-        ${recorded ? '' : gridAdd('workCell',key+'|'+time,'Eintrag am '+name+' '+key+' um '+time+' hinzufügen')}</td>`;
+        ${background ? '' : gridAdd('workCell',key+'|'+time,'Eintrag am '+name+' '+key+' um '+time+' hinzufügen')}</td>`;
     });
     rows.push(`<tr><th scope="row">${time}</th>${cells.join('')}</tr>`);
   }
   const headers = columns.map(({name,day}) => name+'<small>'+pad(day.getDate())+'.'+pad(day.getMonth()+1)+'.</small>');
-  return gridTable('Arbeitszeitraster',headers,rows.join(''));
+  return gridTable('Arbeitszeitraster',headers,rows.join(''),'work-grid');
 }
 function workCell(value) {
   const [key,time] = value.split('|');

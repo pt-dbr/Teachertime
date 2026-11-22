@@ -107,3 +107,10 @@ dialog{border:1px solid var(--line);border-radius:22px;padding:24px;width:min(92
 .work-cell.grid-selected{background:#d2e9df}
 .week-grid .plan-continuation{min-height:44px}
 .work-cell.work-colored .plan-continuation + .grid-add{min-height:28px}
+
+.week-grid.work-grid{min-width:690px;line-height:1.2}
+.work-grid th:first-child{width:64px}
+.work-grid th,.work-grid td{padding:2px 3px;vertical-align:middle}
+.work-grid thead th{padding:5px 3px}
+.work-grid .grid-add,.work-grid .grid-record-cont{min-height:28px}
+.work-grid .grid-slot{min-height:34px;margin:0;padding:3px 4px}
