@@ -290,7 +290,7 @@ function weeklyGrid() {
     const cells = days.map(({name:day,key,slots,changes}) => {
       const booked = slots.filter(slot => slot.start === start)
         .map(slot => lessonCard(slot,key,changes.find(change => change.slot.id === slot.id))).join('');
-      return `<td>${booked}${gridAdd('gridSlot',key+'|'+start,name+' am '+day+' hinzufügen')}</td>`;
+      return `<td>${booked || gridAdd('gridSlot',key+'|'+start,name+' am '+day+' hinzufügen')}</td>`;
     });
     return `<tr><th scope="row">${name}<small>${start}–${end}</small></th>${cells.join('')}</tr>`;
   });
