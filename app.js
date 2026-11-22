@@ -479,7 +479,7 @@ function planView() {
   const single = data.slots.filter(s => !s.weekly).sort((a,b) => (a.day+a.start).localeCompare(b.day+b.start));
   const rows = items => items.map(s => `<div class="row"><div><strong>${escape(s.title || label(s))}</strong><small>${s.weekly ? weekdays[s.day] : dateLabel(dayStart(s.day))} · ${s.start}–${s.end} · ${escape(label(s))}</small></div>${button('Bearbeiten','slot',s.id)}</div>`).join('');
   return heading('Stundenplan',button('CSV importieren','csv')+button('Neuer Stundenplan','newSchedule')+button('+ Termin','slot','','primary'))+
-    `<section class="week-card"><h2 class="section-title">Vormittagsplan</h2>
+    `<section class="week-card morning-card"><h2 class="section-title">Vormittagsplan</h2>
     ${from ? `<p class="muted section-title">Stundenplan gültig ab ${dateLabel(dayStart(from))}</p>` : ''}<div class="actions section-title">${button('Vorige Woche','weekStep','-7')}${dateInput()}${button('Nächste Woche','weekStep','7')}</div>
     ${weeklyGrid()}</section>${balanceView()}
     <section class="week-card"><div class="head"><h2>Arbeitszeitraster</h2><div class="actions">

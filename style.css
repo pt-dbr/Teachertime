@@ -60,3 +60,30 @@ dialog{border:1px solid var(--line);border-radius:22px;padding:24px;width:min(92
 .work-cell.record-after{border-bottom-color:transparent}
 .week-grid .grid-record-cont{min-height:44px;border:0;background:transparent}
 .grid-record-cont:focus-visible{outline:2px solid #234c7a}
+
+/* Keep the complete school morning in view on a tablet. */
+.morning-card{padding:12px}
+.morning-card .section-title{margin-bottom:7px}
+.morning-card .week-grid{min-width:585px;font-size:.875rem;line-height:1.2}
+.morning-card .week-grid th:first-child{width:100px}
+.morning-card .week-grid th,.morning-card .week-grid td{padding:3px;vertical-align:middle}
+.morning-card .week-grid thead th{padding:5px}
+.morning-card .week-grid small{font-size:.75rem}
+.morning-card .grid-add{min-height:35px}
+.morning-card .grid-slot{min-height:35px;margin:0;padding:3px 4px}
+.morning-card .grid-slot:not(.lesson-split) strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.morning-card .grid-slot:not(.lesson-split) small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.morning-card .lesson-normal{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;padding:0}
+.morning-card .lesson-actions{gap:0}
+.morning-card .lesson-actions button{width:30px;min-height:35px;padding:0;font-size:1rem}
+.morning-card .lesson-split{min-height:45px}
+.morning-card .lesson-new,.morning-card .lesson-old{padding:1px 0}
+@media (min-width:660px) and (max-width:1024px){
+  main:has(.morning-card){padding-top:18px}
+  .morning-card .week-grid{min-width:0}
+  .morning-card .week-grid th:first-child{width:92px}
+}
+@media (min-width:660px) and (max-width:900px) and (orientation:portrait){
+  .morning-card .lesson-normal{grid-template-columns:minmax(0,1fr)}
+  .morning-card .lesson-actions button{width:50%;min-height:28px}
+}
