@@ -530,6 +530,53 @@ function union(ranges) {
   }
   return total;
 }
+function allowanceAt(key) {
+  return (data.allowances ?? []).reduce((latest,rule) =>
+    rule.from <= key && (!latest || rule.from > latest.from) ? rule : latest,null);
+}
+function allowanceInRange(start,end,now) {
+  let total = 0;
+  let monday = mondayFor(dateKey(start));
+  if (monday < start) monday = offsetDay(monday,7);
+  for (; monday < end && +monday <= now; monday = offsetDay(monday,7)) {
+    const rule = allowanceAt(dateKey(monday));
+    if (rule) total += rule.count*rule.minutes*60000;
+  }
+  return total;
+}
+function validAllowance(rule) {
+  return rule && isDate(rule.from) && dayStart(rule.from).getDay() === 1
+    && Number.isFinite(rule.count) && rule.count >= 0 && rule.count % .25 === 0
+    && Number.isSafeInteger(rule.minutes) && rule.minutes > 0
+    && Number.isFinite(rule.count*rule.minutes*60000);
+}
+function allowanceEditor(from) {
+  const monday = dateKey(mondayFor(dateKey(new Date())));
+  const current = allowanceAt(from || monday);
+  edit('Ermäßigungsstunden einstellen',`
+    <label>Gültig ab Montag <input type="date" name="from" value="${escape(from || monday)}" required></label>
+    <div class="field-row">
+      <label>Anzahl pro Woche <input type="number" name="count" min="0" step="0.25" value="${current?.count ?? 0}" required></label>
+      <label>Minuten pro Stunde <input type="number" name="minutes" min="1" step="1" value="${current?.minutes ?? 60}" required></label>
+    </div><p class="muted">Mit 0 Stunden beendest du die Anrechnung ab diesem Montag.</p>`, values => {
+    if (values.get('count') === '' || values.get('minutes') === '') throw new Error('Gib die Anzahl und die Dauer ein.');
+    const rule = {from:values.get('from'),count:Number(values.get('count')),minutes:Number(values.get('minutes'))};
+    if (!validAllowance(rule)) throw new Error('Wähle einen Montag und gib eine gültige Anzahl und Dauer ein.');
+    return save(db => {
+      db.allowances = [...(db.allowances ?? []).filter(item => item.from !== rule.from),rule]
+        .sort((a,b) => a.from.localeCompare(b.from));
+    });
+  });
+}
+function allowanceSettings() {
+  const rules = [...(data.allowances ?? [])].sort((a,b) => b.from.localeCompare(a.from));
+  const rows = rules.map(rule => `<div class="row"><div><strong>${rule.count
+    ? rule.count.toLocaleString('de-DE')+' × '+rule.minutes+' Min. pro Woche' : 'Anrechnung beendet'}</strong>
+    <small>Ab ${dateLabel(dayStart(rule.from))}</small></div>${button('Bearbeiten','allowance',rule.from)}</div>`).join('');
+  return `<section><h2 class="section-title">Ermäßigungsstunden</h2>
+    <p>Die Pauschale zählt zur Wochen- und Monatsarbeitszeit. In der Monatsstatistik zählt sie zum Monat des jeweiligen Montags.</p>
+    <div class="actions space">${button('Pauschale einstellen','allowance')}</div>${rows}</section>`;
+}
 function statsView() {
   const [a,b] = reportRange(), now = Date.now();
   const clip = (start,end,limit = +b) => [Math.max(start,+a),Math.min(end,limit)];
@@ -553,6 +600,7 @@ function statsView() {
   });
   const sum = predicate => union([...actual,...remaining].filter(predicate).map(item => item.range));
   const work = sum(() => true);
+  const credit = period === 'Tag' ? 0 : allowanceInRange(a,b,now);
   const atSchool = union(entries.filter(entry => entry.kind === presence).map(entry => entry.range));
   const rows = activities.map(kind => {
     const time = sum(e => e.kind === kind);
@@ -564,14 +612,15 @@ function statsView() {
   }).join('');
   return heading('Statistik', dateInput()+`<label>Zeitraum <select id="period">${options(['Tag','Woche','Monat'],period)}</select></label>`)+
     `<p class="muted">${dateLabel(a)}${period === 'Tag' ? '' : ' – '+dateLabel(offsetDay(b,-1))}</p>
-    <div class="metrics"><section><h2>Arbeitszeit</h2><span class="metric">${duration(work)}</span><p class="muted">Erfasste Zeiten und abgeschlossene Stundenplantermine</p></section>
+    <div class="metrics"><section><h2>Arbeitszeit</h2><span class="metric">${duration(work+credit)}</span><p class="muted">${credit ? 'Inklusive Ermäßigungsstunden' : 'Erfasste Zeiten und abgeschlossene Stundenplantermine'}</p></section>
+    ${credit ? `<section><h2>Ermäßigungsstunden</h2><span class="metric">${duration(credit)}</span><p class="muted">In der Arbeitszeit enthalten</p></section>` : ''}
     <section><h2>Anwesenheit</h2><span class="metric">${duration(atSchool)}</span></section>
     <section><h2>Planzeit</h2><span class="metric">${duration(union(planned.map(slot => clip(slot.startAt,slot.endAt))))}</span><p class="muted">Termine aus dem Stundenplan</p></section></div>
     <section><h2 class="section-title">Nach Tätigkeit</h2>${rows || '<p class="empty">Keine Arbeitszeit im gewählten Zeitraum.</p>'}
     <p class="muted space">Abgelaufene Wochenplantermine und Vertretungen zählen automatisch. Andere Einzeltermine zählen nach der Erfassung. Überschneidungen zählen in der Arbeitszeit einmal.</p></section>${balanceView()}`;
 }
 function settingsView() {
-  return heading('Einstellungen')+`<section><h2 class="section-title">Deine Daten</h2><p>Lehrzeit speichert Einträge, Stundenplan und Dienstort in diesem Browser. Beim Löschen der Website-Daten gehen die Einträge verloren. Sichere deine Daten bei Bedarf in „Auf meinem iPad“.</p><div class="actions space">${button('Sicherung laden','restore')}${button('Sicherung speichern','export')}</div></section>
+  return heading('Einstellungen')+allowanceSettings()+`<section><h2 class="section-title">Deine Daten</h2><p>Lehrzeit speichert Einträge, Stundenplan und Dienstort in diesem Browser. Beim Löschen der Website-Daten gehen die Einträge verloren. Sichere deine Daten bei Bedarf in „Auf meinem iPad“.</p><div class="actions space">${button('Sicherung laden','restore')}${button('Sicherung speichern','export')}</div></section>
   <section><h2 class="section-title">Dienstort</h2><p>${data.school ? 'Dienstort gespeichert.' : 'Am Schulstandort kannst du den aktuellen Standort als Dienstort speichern.'} Bei geöffneter App kann Lehrzeit prüfen, ob du außerhalb bist, und dir die Frage „Arbeitest du gerade?“ stellen. Anwesenheit startest und beendest du manuell.</p><div class="actions space">${button('Aktuellen Standort speichern','school')}${data.school ? button('Standort prüfen','check')+button('Dienstort entfernen','unSchool','','danger') : ''}</div></section>`;
 }
 function render() {
@@ -753,7 +802,7 @@ function restore() {
     catch { throw new Error('Die Datei enthält keine lesbare Sicherung.'); }
     if (!validBackup(backup)) throw new Error('Die Datei ist keine gültige Lehrzeit-Sicherung.');
     if (!confirm('Aktuelle Daten durch diese Sicherung ersetzen?')) return false;
-    return save(db => { db.entries = backup.entries; db.slots = backup.slots; db.school = backup.school; db.adjustments = backup.adjustments ?? []; db.scheduleStarts = backup.scheduleStarts ?? []; });
+    return save(db => { db.entries = backup.entries; db.slots = backup.slots; db.school = backup.school; db.adjustments = backup.adjustments ?? []; db.scheduleStarts = backup.scheduleStarts ?? []; db.allowances = backup.allowances ?? []; });
   });
 }
 function validBackup(db) {
@@ -770,6 +819,9 @@ function validBackup(db) {
     && (e.slot === null || typeof e.slot === 'string'))) return false;
   if (!db.slots.every(s => hasIdTitle(s) && validDetails(s) && activities.includes(s.kind) && isTime(s.start) && isTime(s.end) &&
     s.end > s.start && typeof s.weekly === 'boolean' && (s.weekly ? Number.isInteger(s.day) && s.day >= 0 && s.day <= 6 : isDate(s.day)))) return false;
+  const allowances = db.allowances ?? [];
+  if (!Array.isArray(allowances) || !allowances.every(validAllowance)
+    || new Set(allowances.map(rule => rule.from)).size !== allowances.length) return false;
   const starts = db.scheduleStarts ?? [];
   if (!Array.isArray(starts) || !starts.every(isDate) || new Set(starts).size !== starts.length) return false;
   if (db.slots.some(slot => slot.scheduleFrom !== undefined && (!slot.weekly || !starts.includes(slot.scheduleFrom)))) return false;
@@ -887,6 +939,7 @@ document.addEventListener('click', event => {
     case 'close': dialog.close(); break;
     case 'csv': csvImport(); break;
     case 'newSchedule': newSchedule(); break;
+    case 'allowance': allowanceEditor(value); break;
     case 'export': exportBackup(); break;
     case 'restore': restore(); break;
     case 'school':
