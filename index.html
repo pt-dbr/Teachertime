@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'none'; form-action 'none'; object-src 'none'; base-uri 'none'; img-src 'self' blob:; worker-src 'self'">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#12483d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icon.png">
+<link rel="stylesheet" href="./style.css">
+<script src="./app.js" defer></script>
+<title>Lehrzeit</title>
+</head>
+<body>
+<header><div class="brand"><img src="./icon.png" alt="" width="42" height="42"><span>Lehrzeit<small>Arbeitszeit für Lehrkräfte</small></span></div><span class="local">Lokal gespeichert</span></header>
+<main id="main"></main>
+<nav aria-label="Hauptnavigation">
+<button data-tab="day">Tag</button><button data-tab="plan">Stundenplan</button><button data-tab="stats">Statistik</button><button data-tab="settings">Einstellungen</button>
+</nav>
+<dialog id="dialog"><form id="editor" method="dialog"></form></dialog>
+<div id="notice" role="status" hidden></div>
+</body>
+</html>
