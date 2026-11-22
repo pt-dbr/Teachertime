@@ -87,3 +87,23 @@ dialog{border:1px solid var(--line);border-radius:22px;padding:24px;width:min(92
   .morning-card .lesson-normal{grid-template-columns:minmax(0,1fr)}
   .morning-card .lesson-actions button{width:50%;min-height:28px}
 }
+
+.activity-teaching{--activity-bg:#e0f3e8;--activity-ink:#195443;--activity-line:#bddacb}
+.activity-cover{--activity-bg:#fae5eb;--activity-ink:#752843;--activity-line:#eac4d1}
+.activity-duty{--activity-bg:#fff0cb;--activity-ink:#684708;--activity-line:#e8d49e}
+.activity-parents{--activity-bg:#f5e3d4;--activity-ink:#733e21;--activity-line:#e7c6b1}
+.activity-prep{--activity-bg:#dfeafb;--activity-ink:#244f81;--activity-line:#bed1ed}
+.activity-marking{--activity-bg:#eedff9;--activity-ink:#5c377d;--activity-line:#d9c1ea}
+.activity-materials{--activity-bg:#d9f0f1;--activity-ink:#17575e;--activity-line:#b0dadf}
+.activity-meeting{--activity-bg:#e7eed1;--activity-ink:#435627;--activity-line:#cdd9a9}
+.activity-conference{--activity-bg:#e4e1f7;--activity-ink:#433572;--activity-line:#c9c0e7}
+.activity-other{--activity-bg:#ebedf0;--activity-ink:#424852;--activity-line:#d1d6de}
+.activity-presence{--activity-bg:#deedf4;--activity-ink:#355769;--activity-line:#bfd3df}
+.week-grid .grid-slot[class*="activity-"],.week-grid .grid-record-cont[class*="activity-"]{
+  background:var(--activity-bg);color:var(--activity-ink);border-color:var(--activity-line)
+}
+.week-grid .grid-slot[class*="activity-"]:hover{filter:brightness(.96)}
+.work-cell.work-colored{background:var(--activity-bg)}
+.work-cell.grid-selected{background:#d2e9df}
+.week-grid .plan-continuation{min-height:44px}
+.work-cell.work-colored .plan-continuation + .grid-add{min-height:28px}

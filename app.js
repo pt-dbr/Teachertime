@@ -247,6 +247,12 @@ function gridTable(name, columns, rows) {
     <thead><tr><th scope="col">Zeit</th>${columns.map(column => `<th scope="col">${column}</th>`).join('')}</tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
+const activityColors = {
+  Unterricht:'teaching', Vertretung:'cover', Aufsicht:'duty', Elterngespräch:'parents',
+  Vorbereitung:'prep', Korrekturen:'marking', Arbeitsmaterial:'materials',
+  Besprechung:'meeting', Konferenzen:'conference', Sonstiges:'other', Anwesenheit:'presence'
+};
+function activityColor(kind) { return 'activity-'+(activityColors[kind] ?? 'other'); }
 function gridCard(item, action, caption, variant = '') {
   return `<button type="button" class="grid-slot ${variant}" data-action="${action}" data-value="${escape(item.id)}">
     <strong>${item.kind === 'Vertretung' ? '<b class="cover-mark">V</b> ' : ''}${escape(item.title || label(item))}</strong><small>${escape(caption)}</small></button>`;
@@ -270,9 +276,9 @@ function lessonCard(slot,key,change) {
       <strong><b>M</b> ${title}</strong><small>${time}</small></button>`;
   }
   if (slot.kind !== 'Unterricht') {
-    return gridCard(slot,'slot',time,slot.kind === 'Vertretung' ? 'lesson-cover' : 'grid-duty');
+    return gridCard(slot,'slot',time,activityColor(slot.kind));
   }
-  return `<div class="lesson-normal">${gridCard(slot,'slot',time)}
+  return `<div class="lesson-normal">${gridCard(slot,'slot',time,activityColor(slot.kind))}
     <div class="lesson-actions">
       <button type="button" data-action="lessonMinus" data-value="${escape(value)}" aria-label="Als Minusstunde markieren">−</button>
       <button type="button" data-action="lessonReplace" data-value="${escape(value)}" aria-label="Durch Vertretung ersetzen">✎</button>
@@ -421,13 +427,19 @@ document.addEventListener('click', event => {
   }
 },true);
 
+function roundedPlanRange(slot) {
+  const round = time => Math.round(timeMinutes(time)/quarterMinutes)*quarterMinutes;
+  const start = Math.min(1440-quarterMinutes,round(slot.start));
+  const end = Math.max(start+quarterMinutes,round(slot.end));
+  return {start,end};
+}
 function workGrid() {
   const anchor = dayStart(date), monday = offsetDay(anchor,-((anchor.getDay()+6)%7));
   const [,from,to] = bands.find(item => item[0] === band);
   const now = Date.now();
   const columns = schoolDays.map((name,index) => {
     const day = offsetDay(monday,index), key = dateKey(day);
-    return {name,day,key,planned:scheduledOn(key),entries:rangeEntries(+day,+offsetDay(day,1),now)};
+    return {name,day,key,planned:scheduledOn(key).map(slot => ({...slot,display:roundedPlanRange(slot)})),entries:rangeEntries(+day,+offsetDay(day,1),now)};
   });
   const rows = [];
   for (let minute = from; minute < to; minute += quarterMinutes) {
@@ -437,25 +449,39 @@ function workGrid() {
       const overlaps = (start,end) => start < rowEnd && end > rowStart;
       const first = start => minute === from || start >= rowStart;
       const blocks = [];
+      let background = '', continuesAfter = false, recorded = false;
+      const nextMinute = minute+quarterMinutes;
       for (const slot of planned) {
-        if (!overlaps(slot.startAt,slot.endAt)) continue;
-        const color = slot.kind === 'Vertretung' ? 'lesson-cover' : 'grid-plan';
-        blocks.push(first(slot.startAt) ? gridCard(slot.replacementKey ? {...slot,id:slot.replacementKey} : slot,slot.replacementKey ? 'lessonReplace' : 'slot',slot.start+'–'+slot.end+' · Plan',color)
-          : `<div class="grid-cont ${color}" aria-hidden="true"></div>`);
+        if (slot.display.start > minute || slot.display.end <= minute) continue;
+        const color = activityColor(slot.kind);
+        if (!background || slot.kind === 'Vertretung') {
+          background = color;
+          continuesAfter = slot.display.end > nextMinute && nextMinute < to;
+        }
+        const item = slot.replacementKey ? {...slot,id:slot.replacementKey} : slot;
+        const action = slot.replacementKey ? 'lessonReplace' : 'slot';
+        const caption = slot.start+'–'+slot.end+' · Plan';
+        blocks.push(minute === from || minute === slot.display.start
+          ? gridCard(item,action,caption,color)
+          : `<button type="button" class="grid-record-cont plan-continuation ${color}" data-action="${action}"
+            data-value="${escape(item.id)}" aria-label="${escape((slot.title || label(slot))+' · '+caption)}"></button>`);
       }
-      let recorded = false, continuesAfter = false;
       for (const entry of entries) {
         const end = entry.end ?? Math.max(now,entry.start+1);
         if (!overlaps(entry.start,end)) continue;
         const caption = localTime(new Date(entry.start))+'–'+(entry.end === null ? 'läuft · Stoppen' : localTime(new Date(entry.end)));
+        const color = activityColor(entry.kind);
+        if (!recorded || entry.kind !== presence) {
+          background = color;
+          continuesAfter = end > rowEnd && nextMinute < to;
+        }
         recorded = true;
-        continuesAfter ||= end > rowEnd && minute+quarterMinutes < to;
         const action = entry.end === null ? 'stop' : 'workEdit';
-        blocks.push(first(entry.start) ? gridCard(entry,action,caption,'grid-record')
-          : `<button type="button" class="grid-record grid-record-cont" data-action="${action}"
+        blocks.push(first(entry.start) ? gridCard(entry,action,caption,color)
+          : `<button type="button" class="grid-record-cont ${color}" data-action="${action}"
             data-value="${escape(entry.id)}" aria-label="${escape((entry.title || label(entry))+' · '+caption)}"></button>`);
       }
-      const edges = recorded ? ' work-recorded'+(continuesAfter ? ' record-after' : '') : '';
+      const edges = background ? ' work-colored '+background+(continuesAfter ? ' record-after' : '') : '';
       return `<td class="work-cell${edges}" data-work-day="${key}" data-work-minute="${minute}">${blocks.join('')}
         ${recorded ? '' : gridAdd('workCell',key+'|'+time,'Eintrag am '+name+' '+key+' um '+time+' hinzufügen')}</td>`;
     });
@@ -484,7 +510,7 @@ function planView() {
     ${weeklyGrid()}</section>${balanceView()}
     <section class="week-card"><div class="head"><h2>Arbeitszeitraster</h2><div class="actions">
         <label>Uhrzeit <select id="workBand">${options(bands.map(item => item[0]),band)}</select></label></div></div>
-    <p class="muted section-title">Ziehe über freie Felder eines Tages, um Arbeitszeit einzutragen. Mit + kannst du auch einen Termin planen.</p>${workGrid()}</section>
+    <p class="muted section-title">Farben zeigen die Tätigkeit. Planblöcke sind für die Darstellung auf Viertelstunden gerundet. Ziehe über freie Felder oder tippe auf +.</p>${workGrid()}</section>
     ${custom.length ? `<section><h2 class="section-title">Weitere wöchentliche Termine</h2>${rows(custom)}</section>` : ''}
     <section><h2 class="section-title">Einzeltermine</h2>${rows(single) || '<p class="empty">Hier erscheinen Vertretungen, Aufsichten und Elterngespräche.</p>'}</section>`;
 }
