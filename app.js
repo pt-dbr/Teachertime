@@ -108,10 +108,74 @@ function details(values, kind) {
 function slotDetails(slot) {
   return slot.conferenceType ? {conferenceType:slot.conferenceType,subject:slot.subject} : {};
 }
-function slotsFor(key) {
+function dayAdjustments(key) {
+  return (data.adjustments ?? []).filter(change => change.day === key);
+}
+function datedSlots(key) {
   const weekday = dayStart(key).getDay();
-  return data.slots.filter(slot => slot.weekly ? Number(slot.day) === weekday : slot.day === key)
-    .sort((a,b) => a.start.localeCompare(b.start));
+  return data.slots.filter(slot => slot.weekly ? Number(slot.day) === weekday : slot.day === key);
+}
+function mondayFor(key) {
+  const d = dayStart(key);
+  return offsetDay(d,-((d.getDay()+6)%7));
+}
+function lessonDialog(value, mode) {
+  const [key,slotId] = value.split('|');
+  if (!isDate(key)) return;
+  const previous = dayAdjustments(key).find(change => change.slot.id === slotId);
+  const slot = previous?.slot ?? datedSlots(key).find(item => item.id === slotId);
+  if (!slot || slot.kind !== 'Unterricht') return;
+  const original = slot.title || 'Unterricht';
+  const replace = mode === 'lessonReplace';
+  edit(replace ? 'Vertretung eintragen' : 'Minusstunde eintragen',
+    `<p>${escape(dateLabel(dayStart(key))+' · '+slot.start+'–'+slot.end+' · '+original)}</p>
+    ${replace ? `<label>Neue Stunde <input name="replacement" maxlength="300" required value="${escape(previous?.replacement)}" placeholder="z. B. Deutsch 8b"></label>`
+      : '<p>Diese Stunde entfällt an diesem Tag und zählt als Minusstunde.</p>'}`, values => {
+    const replacement = replace ? values.get('replacement').trim() : null;
+    if (replace && !replacement) throw new Error('Gib den Namen der Vertretungsstunde ein.');
+    return save(db => {
+      db.adjustments = [...(db.adjustments ?? []).filter(change => change.day !== key || change.slot.id !== slotId),
+        {day:key,slot,replacement}];
+    });
+  }, previous ? button('Änderung zurücknehmen','lessonReset',value) : '');
+}
+function monthlyBalance(key) {
+  const d = dayStart(key);
+  const first = new Date(d.getFullYear(),d.getMonth(),1);
+  const last = new Date(d.getFullYear(),d.getMonth()+1,1);
+  let covers = 0, missed = 0, coverMinutes = 0, missedMinutes = 0;
+  const minutes = slot => timeMinutes(slot.end)-timeMinutes(slot.start);
+  for (let day = first; day < last; day = offsetDay(day,1)) {
+    const dayKey = dateKey(day);
+    const adjustments = dayAdjustments(dayKey);
+    missed += adjustments.length;
+    missedMinutes += adjustments.reduce((sum, change) => sum+minutes(change.slot),0);
+    const replacements = slotsFor(dayKey).filter(slot => slot.kind === 'Vertretung');
+    covers += replacements.length;
+    coverMinutes += replacements.reduce((sum,slot) => sum+minutes(slot),0);
+  }
+  return {covers,missed,coverMinutes,missedMinutes};
+}
+function balanceView() {
+  const {covers,missed,coverMinutes,missedMinutes} = monthlyBalance(date);
+  const net = covers-missed, netMinutes = coverMinutes-missedMinutes;
+  const sign = number => number > 0 ? '+' : number < 0 ? '−' : '';
+  const count = number => Math.abs(number) === 1 ? 'Stunde' : 'Stunden';
+  const month = dayStart(date).toLocaleDateString('de-DE',{month:'long',year:'numeric'});
+  return `<section><h2>Stundenkonto · ${month}</h2><div class="balance-grid">
+    <div><strong>Vertretungsstunden</strong><span class="metric">${covers} ${count(covers)}</span><small>${duration(coverMinutes*60000)}</small></div>
+    <div><strong>Minusstunden</strong><span class="metric">${missed} ${count(missed)}</span><small>${duration(missedMinutes*60000)}</small></div>
+    <div><strong>Überstundensaldo</strong><span class="metric">${sign(net)}${Math.abs(net)} ${count(net)}</span><small>${sign(netMinutes)}${duration(Math.abs(netMinutes)*60000)}</small></div>
+    </div><p class="muted space">Bei einem direkten Ersatz zählen eine Vertretungsstunde und eine Minusstunde. Der Saldo bleibt dabei null.</p></section>`;
+}
+function slotsFor(key) {
+  const changes = dayAdjustments(key);
+  const slots = datedSlots(key).filter(slot => !changes.some(change => change.slot.id === slot.id));
+  for (const change of changes) {
+    if (change.replacement) slots.push({...change.slot,kind:'Vertretung',title:change.replacement,
+      weekly:false,day:key,replacementKey:key+'|'+change.slot.id});
+  }
+  return slots.sort((a,b) => a.start.localeCompare(b.start));
 }
 function rangeEntries(startAt, endAt, now = Date.now()) {
   return data.entries.filter(e => e.start < endAt && (e.end ?? Math.max(now,e.start+1)) > startAt);
@@ -164,22 +228,53 @@ function gridTable(name, columns, rows) {
 }
 function gridCard(item, action, caption, variant = '') {
   return `<button type="button" class="grid-slot ${variant}" data-action="${action}" data-value="${escape(item.id)}">
-    <strong>${escape(item.title || label(item))}</strong><small>${escape(caption)}</small></button>`;
+    <strong>${item.kind === 'Vertretung' ? '<b class="cover-mark">V</b> ' : ''}${escape(item.title || label(item))}</strong><small>${escape(caption)}</small></button>`;
 }
 function gridAdd(action,value,description) {
   return `<button type="button" class="grid-add" data-action="${action}" data-value="${value}"
     aria-label="${description}">+</button>`;
 }
-function weeklyGrid(slots) {
+function lessonCard(slot,key,change) {
+  const value = key+'|'+slot.id;
+  const template = change?.slot ?? slot;
+  const title = escape(template.title || label(template));
+  const time = template.start+'–'+template.end;
+  if (change?.replacement) {
+    return `<button type="button" class="grid-slot lesson-split" data-action="lessonReplace" data-value="${escape(value)}">
+      <strong class="lesson-new"><b>V</b> ${escape(change.replacement)}</strong>
+      <span class="lesson-old"><b>M</b> ${title}<small>${time}</small></span></button>`;
+  }
+  if (change) {
+    return `<button type="button" class="grid-slot lesson-minus" data-action="lessonMinus" data-value="${escape(value)}">
+      <strong><b>M</b> ${title}</strong><small>${time}</small></button>`;
+  }
+  if (slot.kind !== 'Unterricht') {
+    return gridCard(slot,'slot',time,slot.kind === 'Vertretung' ? 'lesson-cover' : 'grid-duty');
+  }
+  return `<div class="lesson-normal">${gridCard(slot,'slot',time)}
+    <div class="lesson-actions">
+      <button type="button" data-action="lessonMinus" data-value="${escape(value)}" aria-label="Als Minusstunde markieren">−</button>
+      <button type="button" data-action="lessonReplace" data-value="${escape(value)}" aria-label="Durch Vertretung ersetzen">✎</button>
+    </div></div>`;
+}
+function weeklyGrid() {
+  const monday = mondayFor(date);
+  const days = schoolDays.slice(0,5).map((name,index) => {
+    const key = dateKey(offsetDay(monday,index)), changes = dayAdjustments(key);
+    const slots = datedSlots(key).filter(slot => !changes.some(change => change.slot.id === slot.id));
+    slots.push(...changes.map(change => change.slot));
+    return {name,key,slots,changes};
+  });
   const rows = morning.map(([name,start,end]) => {
-    const cells = schoolDays.slice(0,5).map((day,index) => {
-      const booked = slots.filter(slot => slot.day === index+1 && slot.start === start)
-        .map(slot => gridCard(slot,'slot',slot.start+'–'+slot.end,slot.kind === 'Aufsicht' ? 'grid-duty' : '')).join('');
-      return `<td>${booked}${gridAdd('gridSlot',(index+1)+'|'+start,name+' am '+day+' hinzufügen')}</td>`;
+    const cells = days.map(({name:day,key,slots,changes}) => {
+      const booked = slots.filter(slot => slot.start === start)
+        .map(slot => lessonCard(slot,key,changes.find(change => change.slot.id === slot.id))).join('');
+      return `<td>${booked}${gridAdd('gridSlot',key+'|'+start,name+' am '+day+' hinzufügen')}</td>`;
     });
     return `<tr><th scope="row">${name}<small>${start}–${end}</small></th>${cells.join('')}</tr>`;
   });
-  return gridTable('Vormittagsplan',schoolDays.slice(0,5),rows.join(''));
+  const headers = days.map(({name,key}) => name+'<small>'+key.slice(8,10)+'.'+key.slice(5,7)+'.</small>');
+  return gridTable('Vormittagsplan',headers,rows.join(''));
 }
 function scheduledOn(key) {
   return slotsFor(key).map(slot => ({
@@ -206,8 +301,8 @@ function workGrid() {
       const blocks = [];
       for (const slot of planned) {
         if (!overlaps(slot.startAt,slot.endAt)) continue;
-        const color = slot.kind === 'Vertretung' ? 'grid-duty' : 'grid-plan';
-        blocks.push(first(slot.startAt) ? gridCard(slot,'slot',slot.start+'–'+slot.end+' · Plan',color)
+        const color = slot.kind === 'Vertretung' ? 'lesson-cover' : 'grid-plan';
+        blocks.push(first(slot.startAt) ? gridCard(slot.replacementKey ? {...slot,id:slot.replacementKey} : slot,slot.replacementKey ? 'lessonReplace' : 'slot',slot.start+'–'+slot.end+' · Plan',color)
           : `<div class="grid-cont ${color}" aria-hidden="true"></div>`);
       }
       for (const entry of entries) {
@@ -237,11 +332,11 @@ function planView() {
   const single = data.slots.filter(s => !s.weekly).sort((a,b) => (a.day+a.start).localeCompare(b.day+b.start));
   const rows = items => items.map(s => `<div class="row"><div><strong>${escape(s.title || label(s))}</strong><small>${s.weekly ? weekdays[s.day] : dateLabel(dayStart(s.day))} · ${s.start}–${s.end} · ${escape(label(s))}</small></div>${button('Bearbeiten','slot',s.id)}</div>`).join('');
   return heading('Stundenplan',button('CSV importieren','csv')+button('+ Termin','slot','','primary'))+
-    `<section class="week-card"><h2 class="section-title">Vormittagsplan</h2>${weeklyGrid(weekly)}</section>
+    `<section class="week-card"><h2 class="section-title">Vormittagsplan</h2><div class="actions section-title">${button('Vorige Woche','weekStep','-7')}${dateInput()}${button('Nächste Woche','weekStep','7')}</div>
+    ${weeklyGrid()}</section>${balanceView()}
     <section class="week-card"><div class="head"><h2>Arbeitszeitraster</h2><div class="actions">
-    ${button('Vorige Woche','weekStep','-7')}${dateInput()}${button('Nächste Woche','weekStep','7')}
-    <label>Uhrzeit <select id="workBand">${options(bands.map(item => item[0]),band)}</select></label></div></div>
-    <p class="muted section-title">Plantermine sind grün, Vertretungen gelb und erfasste Zeiten blau.</p>${workGrid()}</section>
+        <label>Uhrzeit <select id="workBand">${options(bands.map(item => item[0]),band)}</select></label></div></div>
+    <p class="muted section-title">Plantermine sind grün, Vertretungen rosa und erfasste Zeiten blau.</p>${workGrid()}</section>
     ${custom.length ? `<section><h2 class="section-title">Weitere wöchentliche Termine</h2>${rows(custom)}</section>` : ''}
     <section><h2 class="section-title">Einzeltermine</h2>${rows(single) || '<p class="empty">Hier erscheinen Vertretungen, Aufsichten und Elterngespräche.</p>'}</section>`;
 }
@@ -299,7 +394,7 @@ function statsView() {
     <section><h2>Anwesenheit</h2><span class="metric">${duration(atSchool)}</span></section>
     <section><h2>Planzeit</h2><span class="metric">${duration(union(planned.map(slot => clip(slot.startAt,slot.endAt))))}</span><p class="muted">Termine aus dem Stundenplan</p></section></div>
     <section><h2 class="section-title">Nach Tätigkeit</h2>${rows || '<p class="empty">Keine Arbeitszeit im gewählten Zeitraum.</p>'}
-    <p class="muted space">Abgelaufene Wochenplantermine und Vertretungen zählen automatisch. Andere Einzeltermine zählen nach der Erfassung. Überschneidungen zählen in der Arbeitszeit einmal.</p></section>`;
+    <p class="muted space">Abgelaufene Wochenplantermine und Vertretungen zählen automatisch. Andere Einzeltermine zählen nach der Erfassung. Überschneidungen zählen in der Arbeitszeit einmal.</p></section>${balanceView()}`;
 }
 function settingsView() {
   return heading('Einstellungen')+`<section><h2 class="section-title">Deine Daten</h2><p>Lehrzeit speichert Einträge, Stundenplan und Dienstort in diesem Browser. Beim Löschen der Website-Daten gehen die Einträge verloren. Sichere deine Daten bei Bedarf in „Auf meinem iPad“.</p><div class="actions space">${button('Sicherung laden','restore')}${button('Sicherung speichern','export')}</div></section>
@@ -354,7 +449,7 @@ function entryEditor(entryId, slot, cell) {
 }
 function slotEditor(slotId, cell) {
   const slot = data.slots.find(item => item.id === slotId);
-  const weekly = slot?.weekly ?? !cell?.key;
+  const weekly = slot?.weekly ?? (cell?.weekly ?? !cell?.key);
   const start = slot?.start ?? cell?.time ?? '08:00';
   const end = slot?.end ?? cell?.end ?? gridTime(Math.min(1439,timeMinutes(start)+45));
   edit(slot ? 'Termin bearbeiten' : 'Termin hinzufügen', `
@@ -383,7 +478,13 @@ function slotEditor(slotId, cell) {
     editor.querySelector('#slot-title-label').textContent = kind.value === 'Aufsicht' ? 'Pausenbereich' : 'Fach oder Titel';
     editor.elements.title.placeholder = kind.value === 'Aufsicht' ? 'z. B. Schulhof' : 'z. B. Mathematik 7b';
   };
-  kind.addEventListener('change',updateTitle);
+  kind.addEventListener('change',() => {
+    if (kind.value === 'Vertretung' && !slot) {
+      toggle.checked = false;
+      visibility();
+    }
+    updateTitle();
+  });
   updateTitle();
   toggle.onchange = visibility;
   visibility();
@@ -454,7 +555,7 @@ function restore() {
     catch { throw new Error('Die Datei enthält keine lesbare Sicherung.'); }
     if (!validBackup(backup)) throw new Error('Die Datei ist keine gültige Lehrzeit-Sicherung.');
     if (!confirm('Aktuelle Daten durch diese Sicherung ersetzen?')) return false;
-    return save(db => { db.entries = backup.entries; db.slots = backup.slots; db.school = backup.school; });
+    return save(db => { db.entries = backup.entries; db.slots = backup.slots; db.school = backup.school; db.adjustments = backup.adjustments ?? []; });
   });
 }
 function validBackup(db) {
@@ -471,6 +572,11 @@ function validBackup(db) {
     && (e.slot === null || typeof e.slot === 'string'))) return false;
   if (!db.slots.every(s => hasIdTitle(s) && validDetails(s) && activities.includes(s.kind) && isTime(s.start) && isTime(s.end) &&
     s.end > s.start && typeof s.weekly === 'boolean' && (s.weekly ? Number.isInteger(s.day) && s.day >= 0 && s.day <= 6 : isDate(s.day)))) return false;
+  if (db.adjustments !== undefined && (!Array.isArray(db.adjustments) || !db.adjustments.every(change =>
+    change && isDate(change.day) && hasIdTitle(change.slot) && change.slot.kind === 'Unterricht' &&
+    isTime(change.slot.start) && isTime(change.slot.end) && change.slot.end > change.slot.start &&
+    (change.replacement === null || (typeof change.replacement === 'string' && change.replacement.trim() && change.replacement.length <= 300))
+  ) || new Set(db.adjustments.map(change => change.day+'|'+change.slot.id)).size !== db.adjustments.length)) return false;
   return [db.entries,db.slots].every(rows => new Set(rows.map(row => row.id)).size === rows.length) &&
     [presence,'work'].every(type => db.entries.filter(e => e.end === null &&
       (e.kind === presence) === (type === presence)).length <= 1);
@@ -545,9 +651,15 @@ document.addEventListener('click', event => {
     case 'entry': entryEditor(value); break;
     case 'slot': slotEditor(value); break;
     case 'gridSlot': {
-      const [day,time] = value.split('|');
+      const [key,time] = value.split('|');
       const block = morning.find(item => item[1] === time);
-      if (block) slotEditor('',{day:Number(day),time,end:block[2],kind:block[3]});
+      if (block && isDate(key)) slotEditor('',{key,weekly:true,time,end:block[2],kind:block[3]});
+      break;
+    }
+    case 'lessonMinus': case 'lessonReplace': lessonDialog(value,action); break;
+    case 'lessonReset': {
+      const [key,slotId] = value.split('|');
+      if (save(db => { db.adjustments = (db.adjustments ?? []).filter(change => change.day !== key || change.slot.id !== slotId); })) dialog.close();
       break;
     }
     case 'workCell': workCell(value); break;

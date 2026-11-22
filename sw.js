@@ -1,4 +1,4 @@
-const cacheName = 'lehrzeit-v4-' + self.registration.scope;
+const cacheName = 'lehrzeit-v5-' + self.registration.scope;
 const assets = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './icon.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(assets.map(asset => new Request(new URL(asset,self.registration.scope),{cache:'reload'})))));
