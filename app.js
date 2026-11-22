@@ -1,6 +1,8 @@
 'use strict';
 
-const activities = ['Unterricht', 'Vertretung', 'Aufsicht', 'Elterngespräch', 'Vorbereitung', 'Korrekturen', 'Arbeitsmaterial', 'Besprechung', 'Sonstiges'];
+const conference = 'Konferenzen';
+const types = ['Lehrerkonferenz','Schulkonferenz','Fachkonferenz','Teilkonferenz'];
+const activities = ['Unterricht', 'Vertretung', 'Aufsicht', 'Elterngespräch', 'Vorbereitung', 'Korrekturen', 'Arbeitsmaterial', 'Besprechung', conference, 'Sonstiges'];
 const presence = 'Anwesenheit';
 const weekdays = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 const storageKey = 'lehrzeit:v1:' + location.pathname.replace(/index\.html$/, '').replace(/\/?$/, '/');
@@ -68,10 +70,10 @@ function dateInput() {
   return `<label>Datum <input type="date" id="date" value="${date}"></label>`;
 }
 function timer(entries, type) { return entries.find(e => e.end === null && (e.kind === presence) === (type === presence)); }
-function start(kind, title = '', slot = null) {
+function start(kind, title = '', slot = null, details = {}) {
   return save(db => {
     if (timer(db.entries, kind)) throw new Error('timer');
-    db.entries.push({id:id(), kind, title, start:Date.now(), end:null, slot, day:dateKey(new Date())});
+    db.entries.push({id:id(), kind, title, ...details, start:Date.now(), end:null, slot, day:dateKey(new Date())});
   });
 }
 function stop(entryId) {
@@ -79,6 +81,32 @@ function stop(entryId) {
     const entry = db.entries.find(item => item.id === entryId && item.end === null);
     if (entry) entry.end = Math.max(Date.now(), entry.start + 1000);
   });
+}
+function label(item) {
+  return item.conferenceType ? item.conferenceType + (item.subject ? ' · ' + item.subject : '') : item.kind;
+}
+function conferenceFields(item) {
+  return `<label data-type>Konferenzart <select name="conferenceType">${options(types,item?.conferenceType)}</select></label>
+    <label data-subject>Fach <input name="subject" maxlength="100" value="${escape(item?.subject)}"></label>`;
+}
+function bindConferenceFields() {
+  const kind = editor.elements.kind, type = editor.elements.conferenceType;
+  const update = () => {
+    const isConference = !kind || kind.value === conference;
+    editor.querySelector('[data-type]').hidden = !isConference;
+    editor.querySelector('[data-subject]').hidden = !isConference || type.value !== 'Fachkonferenz';
+  };
+  if (kind) kind.addEventListener('change',update);
+  type.addEventListener('change',update);
+  update();
+}
+function details(values, kind) {
+  if (kind !== conference) return {};
+  const conferenceType = values.get('conferenceType');
+  return {conferenceType,subject:conferenceType === 'Fachkonferenz' ? values.get('subject').trim() : ''};
+}
+function slotDetails(slot) {
+  return slot.conferenceType ? {conferenceType:slot.conferenceType,subject:slot.subject} : {};
 }
 function slotsFor(key) {
   const weekday = dayStart(key).getDay();
@@ -95,15 +123,15 @@ function dayView() {
   const slots = slotsFor(date);
   const planRows = slots.map(slot => {
     const booked = data.entries.find(e => e.slot === slot.id && e.day === date);
-    return `<div class="row"><div><strong>${escape(slot.title || slot.kind)}</strong><small>${escape(slot.kind)} · ${slot.start}–${slot.end}</small></div>${booked ? (booked.end === null ? '<span class="muted">Timer läuft</span>' : button('Bearbeiten','entry',booked.id)) : button('Erfassen','book',slot.id)}</div>`;
+    return `<div class="row"><div><strong>${escape(slot.title || label(slot))}</strong><small>${escape(label(slot))} · ${slot.start}–${slot.end}</small></div>${booked ? (booked.end === null ? '<span class="muted">Timer läuft</span>' : button('Bearbeiten','entry',booked.id)) : button('Erfassen','book',slot.id)}</div>`;
   }).join('');
   const entryRows = entries.map(e => {
     const format = n => inputTime(n).replace('T', ' · ');
-    return `<div class="row"><div><strong>${escape(e.title || e.kind)}</strong><small>${escape(e.kind)} · ${format(e.start)} – ${e.end === null ? 'läuft' : format(e.end)}</small></div>${e.end === null ? button('Stoppen','stop',e.id) : button('Bearbeiten','entry',e.id)}</div>`;
+    return `<div class="row"><div><strong>${escape(e.title || label(e))}</strong><small>${escape(label(e))} · ${format(e.start)} – ${e.end === null ? 'läuft' : format(e.end)}</small></div>${e.end === null ? button('Stoppen','stop',e.id) : button('Bearbeiten','entry',e.id)}</div>`;
   }).join('');
   return heading('Tag', dateInput()+button('+ Zeit nachtragen','entry','','primary')) +
     `<section><h2 class="section-title">Arbeitszeit erfassen</h2>${work ?
-      `<p>${escape(work.title || work.kind)}</p><div class="clock" id="clock"></div>${button('Timer stoppen','stop',work.id,'primary')}` :
+      `<p>${escape(work.title || label(work))}</p><div class="clock" id="clock"></div>${button('Timer stoppen','stop',work.id,'primary')}` :
       `<div class="grid">${activities.map(kind => button(kind,'start',kind)).join('')}</div>`}
       <div class="status"><div><strong>Anwesenheit</strong><p class="muted">${atSchool ? 'Seit '+inputTime(atSchool.start).replace('T',' · ') : 'Keine laufende Anwesenheit'}</p></div>
       ${atSchool ? button('Anwesenheit beenden','stop',atSchool.id) : button('Anwesenheit starten','start',presence)}</div></section>
@@ -113,7 +141,7 @@ function dayView() {
 function planView() {
   const weekly = data.slots.filter(s => s.weekly).sort((a,b) => ((+a.day+6)%7)-((+b.day+6)%7)||a.start.localeCompare(b.start));
   const single = data.slots.filter(s => !s.weekly).sort((a,b) => (a.day+a.start).localeCompare(b.day+b.start));
-  const rows = slots => slots.map(s => `<div class="row"><div><strong>${escape(s.title || s.kind)}</strong><small>${escape(s.weekly ? weekdays[+s.day] : dateLabel(dayStart(s.day)))} · ${s.start}–${s.end} · ${escape(s.kind)}</small></div>${button('Bearbeiten','slot',s.id)}</div>`).join('');
+  const rows = slots => slots.map(s => `<div class="row"><div><strong>${escape(s.title || label(s))}</strong><small>${escape(s.weekly ? weekdays[+s.day] : dateLabel(dayStart(s.day)))} · ${s.start}–${s.end} · ${escape(label(s))}</small></div>${button('Bearbeiten','slot',s.id)}</div>`).join('');
   return heading('Stundenplan',button('CSV importieren','csv')+button('+ Termin','slot','','primary'))+
     `<section><h2 class="section-title">Wöchentlich</h2>${rows(weekly) || '<p class="empty">Lege wiederkehrenden Unterricht und Aufsichten an.</p>'}</section>
     <section><h2 class="section-title">Einzeltermine</h2>${rows(single) || '<p class="empty">Hier erscheinen Vertretungen, Aufsichten und Elterngespräche.</p>'}</section>`;
@@ -139,16 +167,29 @@ function statsView() {
   const entries = rangeEntries(+a,+b,now);
   const sum = predicate => union(entries.filter(predicate).map(e => [Math.max(e.start,+a),Math.min(e.end ?? now,+b)]));
   const work = sum(e => e.kind !== presence), atSchool = sum(e => e.kind === presence);
+  const planned = [];
+  for (let day = a; day < b; day = offsetDay(day,1)) {
+    const key = dateKey(day);
+    for (const slot of slotsFor(key)) {
+      const start = +new Date(key+'T'+slot.start), end = +new Date(key+'T'+slot.end);
+      if (end > start) planned.push([start,end]);
+    }
+  }
   const rows = activities.map(kind => {
     const time = sum(e => e.kind === kind);
-    return time ? `<div class="row"><div><strong>${kind}</strong><progress max="${Math.max(work,1)}" value="${time}" aria-label="${kind}"></progress></div><span>${duration(time)}</span></div>` : '';
+    const breakdown = kind === conference ? types.map(type => {
+      const subtotal = sum(e => e.kind === conference && e.conferenceType === type);
+      return subtotal ? `<small>${type} · ${duration(subtotal)}</small>` : '';
+    }).join('') : '';
+    return time ? `<div class="row"><div><strong>${kind}</strong>${breakdown}<progress max="${Math.max(work,1)}" value="${time}" aria-label="${kind}"></progress></div><span>${duration(time)}</span></div>` : '';
   }).join('');
   return heading('Statistik', dateInput()+`<label>Zeitraum <select id="period">${options(['Tag','Woche','Monat'],period)}</select></label>`)+
     `<p class="muted">${dateLabel(a)}${period === 'Tag' ? '' : ' – '+dateLabel(offsetDay(b,-1))}</p>
-    <div class="metrics"><section><h2>Arbeitszeit</h2><span class="metric">${duration(work)}</span></section>
-    <section><h2>Anwesenheit</h2><span class="metric">${duration(atSchool)}</span></section></div>
+    <div class="metrics"><section><h2>Erfasste Arbeitszeit</h2><span class="metric">${duration(work)}</span></section>
+    <section><h2>Anwesenheit</h2><span class="metric">${duration(atSchool)}</span></section>
+    <section><h2>Planzeit</h2><span class="metric">${duration(union(planned))}</span><p class="muted">Termine aus dem Stundenplan</p></section></div>
     <section><h2 class="section-title">Nach Tätigkeit</h2>${rows || '<p class="empty">Keine Arbeitszeit im gewählten Zeitraum.</p>'}
-    <p class="muted space">Überschneidungen zählen in der gesamten Arbeitszeit einmal.</p></section>`;
+    <p class="muted space">Planzeit und gebuchte Arbeitszeit haben eigene Summen. Buche einzelne Termine im Tagesplan über „Erfassen“. Überschneidungen zählen je Summe einmal.</p></section>`;
 }
 function settingsView() {
   return heading('Einstellungen')+`<section><h2 class="section-title">Deine Daten</h2><p>Lehrzeit speichert Einträge, Stundenplan und Dienstort in diesem Browser. Beim Löschen der Website-Daten gehen die Einträge verloren. Sichere deine Daten bei Bedarf in „Auf meinem iPad“.</p><div class="actions space">${button('Sicherung laden','restore')}${button('Sicherung speichern','export')}</div></section>
@@ -188,22 +229,25 @@ function entryEditor(entryId, slot) {
   const endAt = entry?.end ?? (slot ? +new Date(date+'T'+slot.end) : startAt+1800000);
   edit(entry ? 'Zeit bearbeiten' : 'Zeit nachtragen', `
     <label>Tätigkeit <select name="kind">${options([...activities,presence],entry?.kind ?? slot?.kind ?? 'Vorbereitung')}</select></label>
+    ${conferenceFields(entry ?? slot)}
     <label>Titel oder Notiz <input name="title" value="${escape(entry?.title ?? slot?.title)}" maxlength="300"></label>
     <div class="field-row"><label>Beginn <input name="start" type="datetime-local" value="${inputTime(startAt)}" required></label>
     <label>Ende <input name="end" type="datetime-local" value="${inputTime(endAt)}" required></label></div>`, values => {
     const start = +new Date(values.get('start')), end = +new Date(values.get('end'));
     if (!(end > start && end <= Date.now())) throw new Error('Das Ende muss nach dem Beginn liegen und darf nicht in der Zukunft sein.');
     return save(db => {
-      const updated = {id:entryId || id(), kind:values.get('kind'),title:values.get('title').trim(),start,end,slot:entry?.slot ?? slot?.id ?? null,day:entry?.day ?? date};
+      const updated = {id:entryId || id(), kind:values.get('kind'),...details(values,values.get('kind')),title:values.get('title').trim(),start,end,slot:entry?.slot ?? slot?.id ?? null,day:entry?.day ?? date};
       db.entries = [...db.entries.filter(e => e.id !== updated.id), updated];
     });
   }, entry ? button('Löschen','deleteEntry',entry.id,'danger') : '');
+  bindConferenceFields();
 }
 function slotEditor(slotId) {
   const slot = data.slots.find(item => item.id === slotId);
   const weekly = slot?.weekly ?? true;
   edit(slot ? 'Termin bearbeiten' : 'Termin hinzufügen', `
     <label>Tätigkeit <select name="kind">${options(activities,slot?.kind)}</select></label>
+    ${conferenceFields(slot)}
     <label>Titel, z. B. Mathematik 7b <input name="title" maxlength="300" value="${escape(slot?.title)}"></label>
     <label class="inline"><input type="checkbox" name="weekly"${weekly ? ' checked' : ''}> Wöchentlich wiederholen</label>
     <label id="weekday">Wochentag <select name="weekday">${options(weekdays,slot?.weekly ? weekdays[+slot.day] : weekdays[dayStart(date).getDay()])}</select></label>
@@ -212,10 +256,11 @@ function slotEditor(slotId) {
     if (values.get('end') <= values.get('start')) throw new Error('Das Ende muss nach dem Beginn liegen.');
     const repeats = values.has('weekly');
     return save(db => {
-      const updated = {id:slotId || id(),kind:values.get('kind'),title:values.get('title').trim(),weekly:repeats,day:repeats ? weekdays.indexOf(values.get('weekday')) : values.get('date'),start:values.get('start'),end:values.get('end')};
+      const updated = {id:slotId || id(),kind:values.get('kind'),...details(values,values.get('kind')),title:values.get('title').trim(),weekly:repeats,day:repeats ? weekdays.indexOf(values.get('weekday')) : values.get('date'),start:values.get('start'),end:values.get('end')};
       db.slots = [...db.slots.filter(s => s.id !== updated.id), updated];
     });
   }, slot ? button('Löschen','deleteSlot',slot.id,'danger') : '');
+  bindConferenceFields();
   const toggle = editor.elements.weekly;
   const visibility = () => {
     editor.querySelector('#weekday').hidden = !toggle.checked;
@@ -229,7 +274,7 @@ function book(slotId) {
   if (!slot) return;
   const startAt = +new Date(date+'T'+slot.start), endAt = +new Date(date+'T'+slot.end);
   editor.onsubmit = event => event.preventDefault();
-  editor.innerHTML = `<h2>${escape(slot.title || slot.kind)}</h2><p>${slot.start}–${slot.end}</p><div class="actions">
+  editor.innerHTML = `<h2>${escape(slot.title || label(slot))}</h2><p>${slot.start}–${slot.end}</p><div class="actions">
     ${endAt <= Date.now() ? button('Planzeit buchen','bookExact',slot.id,'primary') : ''}
     ${button('Zeiten anpassen','bookEdit',slot.id)}
     ${date === dateKey(new Date()) && !timer(data.entries,'work') ? button('Timer starten','bookStart',slot.id) : ''}
@@ -244,11 +289,13 @@ function csvRows(text) {
     const [day,start,end,kind,...title] = line.split(';').map(field => field.trim());
     if (day.toLowerCase() === 'tag' && result.length === 0) continue;
     const weekday = weekdays.findIndex(item => item.toLowerCase() === day.toLowerCase());
-    const activity = activities.find(item => item.toLowerCase() === kind?.toLowerCase());
+    const conferenceType = types.find(type => type.toLowerCase() === kind?.toLowerCase());
+    const activity = conferenceType ? conference : activities.find(item => item.toLowerCase() === kind?.toLowerCase() && item !== conference);
+    const extra = conferenceType ? {conferenceType,subject:''} : {};
     if (weekday < 0 || !isTime(start) || !isTime(end) || end <= start || !activity || !title.length) {
       throw new Error(`Zeile ${index+1} ist ungültig. Format: Tag;Beginn;Ende;Tätigkeit;Titel`);
     }
-    result.push({id:id(),kind:activity,title:title.join(';'),weekly:true,day:weekday,start,end});
+    result.push({id:id(),kind:activity,...extra,title:title.join(';'),weekly:true,day:weekday,start,end});
   }
   if (!result.length) throw new Error('Die Datei enthält keine Termine.');
   return result;
@@ -264,7 +311,7 @@ function csvImport() {
     return save(db => {
       for (const row of rows) {
         const same = s => s.weekly && s.day === row.day && s.start === row.start && s.end === row.end &&
-          s.title === row.title && s.kind === row.kind;
+          s.title === row.title && s.kind === row.kind && s.conferenceType === row.conferenceType;
         if (!db.slots.some(same)) db.slots.push(row);
       }
     });
@@ -293,14 +340,17 @@ function restore() {
 }
 function validBackup(db) {
   const hasIdTitle = row => row && typeof row.id === 'string' && typeof row.title === 'string';
+  const validDetails = row => row.kind === conference
+    ? types.includes(row.conferenceType) && typeof row.subject === 'string' && row.subject.length <= 100
+    : row.conferenceType === undefined && row.subject === undefined;
   const validSchool = s => s === null || (s && Number.isFinite(s.lat) && Math.abs(s.lat) <= 90
     && Number.isFinite(s.lon) && Math.abs(s.lon) <= 180 && Number.isFinite(s.radius) && s.radius >= 50 && s.radius <= 1000);
   const isTimestamp = n => Number.isFinite(n) && Math.abs(n) <= 8.64e15;
   if (!(db?.version === 1 && Array.isArray(db.entries) && Array.isArray(db.slots) && validSchool(db.school))) return false;
-  if (!db.entries.every(e => hasIdTitle(e) && [...activities,presence].includes(e.kind) && isTimestamp(e.start)
+  if (!db.entries.every(e => hasIdTitle(e) && validDetails(e) && [...activities,presence].includes(e.kind) && isTimestamp(e.start)
     && (e.end === null || (isTimestamp(e.end) && e.end > e.start)) && isDate(e.day)
     && (e.slot === null || typeof e.slot === 'string'))) return false;
-  if (!db.slots.every(s => hasIdTitle(s) && activities.includes(s.kind) && isTime(s.start) && isTime(s.end) &&
+  if (!db.slots.every(s => hasIdTitle(s) && validDetails(s) && activities.includes(s.kind) && isTime(s.start) && isTime(s.end) &&
     s.end > s.start && typeof s.weekly === 'boolean' && (s.weekly ? Number.isInteger(s.day) && s.day >= 0 && s.day <= 6 : isDate(s.day)))) return false;
   return [db.entries,db.slots].every(rows => new Set(rows.map(row => row.id)).size === rows.length) &&
     [presence,'work'].every(type => db.entries.filter(e => e.end === null &&
@@ -346,7 +396,7 @@ function bookAction(action, value) {
   if (!slot) return;
   if (action === 'bookEdit') { entryEditor('',slot); return; }
   if (action === 'bookStart' && date === dateKey(new Date())) {
-    if (start(slot.kind,slot.title,slot.id)) dialog.close();
+    if (start(slot.kind,slot.title,slot.id,slotDetails(slot))) dialog.close();
     return;
   }
   if (action !== 'bookExact') return;
@@ -354,7 +404,7 @@ function bookAction(action, value) {
   if (!(endAt > startAt && endAt <= Date.now())) return;
   if (save(db => {
     if (!db.entries.some(e => e.slot === slot.id && e.day === date)) {
-      db.entries.push({id:id(),kind:slot.kind,title:slot.title,start:startAt,end:endAt,slot:slot.id,day:date});
+      db.entries.push({id:id(),kind:slot.kind,title:slot.title,...slotDetails(slot),start:startAt,end:endAt,slot:slot.id,day:date});
     }
   })) dialog.close();
 }
@@ -365,7 +415,13 @@ document.addEventListener('click', event => {
   if (control.dataset.tab) { tab = control.dataset.tab; render(); return; }
   const {action,value} = control.dataset;
   switch (action) {
-    case 'start': if (start(value) && dialog.open) dialog.close(); break;
+    case 'start':
+      if (value === conference) {
+        edit('Konferenz starten',conferenceFields(),values => start(conference,'',null,details(values,conference)));
+        editor.querySelector('.primary').textContent = 'Timer starten';
+        bindConferenceFields();
+      } else if (start(value) && dialog.open) dialog.close();
+      break;
     case 'stop': stop(value); break;
     case 'entry': entryEditor(value); break;
     case 'slot': slotEditor(value); break;
