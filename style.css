@@ -53,3 +53,10 @@ dialog{border:1px solid var(--line);border-radius:22px;padding:24px;width:min(92
 .balance-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px;margin-top:12px}
 .balance-grid>div{background:var(--paper);border-radius:10px;padding:12px}
 .balance-grid .metric{font-size:1.35rem}
+
+.work-cell{touch-action:none;-webkit-user-select:none;user-select:none}
+.work-cell.grid-selected{background:#d2e9df;box-shadow:inset 2px 0 #23705d,inset -2px 0 #23705d}
+.work-cell.work-recorded{background:#e4effb}
+.work-cell.record-after{border-bottom-color:transparent}
+.week-grid .grid-record-cont{min-height:44px;border:0;background:transparent}
+.grid-record-cont:focus-visible{outline:2px solid #234c7a}

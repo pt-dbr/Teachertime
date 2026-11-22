@@ -108,12 +108,12 @@ function details(values, kind) {
 function slotDetails(slot) {
   return slot.conferenceType ? {conferenceType:slot.conferenceType,subject:slot.subject} : {};
 }
-function dayAdjustments(key) {
-  return (data.adjustments ?? []).filter(change => change.day === key);
+function dayAdjustments(key, db = data) {
+  return (db.adjustments ?? []).filter(change => change.day === key);
 }
-function datedSlots(key) {
+function datedSlots(key, db = data) {
   const weekday = dayStart(key).getDay();
-  return data.slots.filter(slot => slot.weekly ? Number(slot.day) === weekday : slot.day === key);
+  return db.slots.filter(slot => slot.weekly ? Number(slot.day) === weekday : slot.day === key);
 }
 function mondayFor(key) {
   const d = dayStart(key);
@@ -168,9 +168,9 @@ function balanceView() {
     <div><strong>Überstundensaldo</strong><span class="metric">${sign(net)}${Math.abs(net)} ${count(net)}</span><small>${sign(netMinutes)}${duration(Math.abs(netMinutes)*60000)}</small></div>
     </div><p class="muted space">Bei einem direkten Ersatz zählen eine Vertretungsstunde und eine Minusstunde. Der Saldo bleibt dabei null.</p></section>`;
 }
-function slotsFor(key) {
-  const changes = dayAdjustments(key);
-  const slots = datedSlots(key).filter(slot => !changes.some(change => change.slot.id === slot.id));
+function slotsFor(key, db = data) {
+  const changes = dayAdjustments(key,db);
+  const slots = datedSlots(key,db).filter(slot => !changes.some(change => change.slot.id === slot.id));
   for (const change of changes) {
     if (change.replacement) slots.push({...change.slot,kind:'Vertretung',title:change.replacement,
       weekly:false,day:key,replacementKey:key+'|'+change.slot.id});
@@ -276,11 +276,130 @@ function weeklyGrid() {
   const headers = days.map(({name,key}) => name+'<small>'+key.slice(8,10)+'.'+key.slice(5,7)+'.</small>');
   return gridTable('Vormittagsplan',headers,rows.join(''));
 }
-function scheduledOn(key) {
-  return slotsFor(key).map(slot => ({
+function scheduledOn(key, db = data) {
+  return slotsFor(key,db).map(slot => ({
     ...slot, startAt:+new Date(key+'T'+slot.start), endAt:+new Date(key+'T'+slot.end)
   })).filter(slot => slot.endAt > slot.startAt);
 }
+const quarterMinutes = 15;
+
+function gridInstant(key, minute) {
+  return minute === 1440 ? +offsetDay(dayStart(key),1) : +new Date(key+'T'+gridTime(minute));
+}
+
+function gridRange(key, first, last) {
+  return {
+    key,
+    time:gridTime(Math.min(first,last)),
+    startAt:gridInstant(key,Math.min(first,last)),
+    endAt:gridInstant(key,Math.max(first,last)+quarterMinutes)
+  };
+}
+
+function workConflict(db, start, end, ignoredId, kind) {
+  const overlaps = (a,b) => a < end && b > start;
+  const entry = db.entries.find(item => item.id !== ignoredId && (item.kind === presence) === (kind === presence) && overlaps(item.start,item.end ?? Infinity));
+  if (entry) return 'Der Zeitraum überschneidet sich mit „'+(entry.title || label(entry))+'“. Wähle einen freien Zeitraum oder bearbeite den vorhandenen Eintrag.';
+  if (kind === presence) return '';
+  for (let day = dayStart(dateKey(new Date(start))); +day < end; day = offsetDay(day,1)) {
+    const slot = scheduledOn(dateKey(day),db).find(item => overlaps(item.startAt,item.endAt));
+    if (slot) return 'Der Zeitraum überschneidet sich mit dem Plantermin „'+(slot.title || label(slot))+'“. Wähle einen freien Zeitraum.';
+  }
+  return '';
+}
+
+let gridDrag = null;
+let suppressGridClick = false;
+
+function workGridCellAt(event) {
+  return document.elementFromPoint(event.clientX,event.clientY)?.closest('[data-work-day]');
+}
+
+function paintGridSelection(cell) {
+  const drag = gridDrag;
+  const end = cell && cell.dataset.workDay === drag.key ? Number(cell.dataset.workMinute) : null;
+  for (const item of drag.cells) {
+    const minute = Number(item.dataset.workMinute);
+    item.classList.toggle('grid-selected',end !== null &&
+      minute >= Math.min(drag.first,end) && minute <= Math.max(drag.first,end));
+  }
+}
+
+function cancelGridSelection() {
+  const selection = gridDrag;
+  if (!selection) return;
+  gridDrag = null;
+  for (const cell of selection.cells) cell.classList.remove('grid-selected');
+  if (selection.origin.hasPointerCapture(selection.pointerId)) selection.origin.releasePointerCapture(selection.pointerId);
+}
+
+main.addEventListener('pointerdown', event => {
+  if (gridDrag || !event.isPrimary || event.button !== 0) return;
+  suppressGridClick = false;
+  const cell = event.target.closest('[data-work-day]');
+  const control = event.target.closest('button');
+  if (!cell || (control && control.dataset.action !== 'workCell')) return;
+  const key = cell.dataset.workDay;
+  gridDrag = {origin:cell,key,first:Number(cell.dataset.workMinute),pointerId:event.pointerId,
+    cells:cell.closest('table').querySelectorAll('[data-work-day="'+key+'"]'), moved:false};
+  cell.setPointerCapture(event.pointerId);
+  paintGridSelection(cell);
+  event.preventDefault();
+});
+main.addEventListener('pointermove', event => {
+  if (gridDrag?.pointerId !== event.pointerId) return;
+  const cell = workGridCellAt(event);
+  if (cell !== gridDrag.origin) gridDrag.moved = true;
+  paintGridSelection(cell);
+});
+main.addEventListener('pointerup', event => {
+  if (gridDrag?.pointerId !== event.pointerId) return;
+  const {key,first,moved} = gridDrag;
+  const cell = workGridCellAt(event);
+  suppressGridClick = true;
+  cancelGridSelection();
+  if (!cell || cell.dataset.workDay !== key) return;
+  const last = Number(cell.dataset.workMinute);
+  if (!moved && first === last) {
+    workCell(key+'|'+gridTime(first));
+    return;
+  }
+  const range = gridRange(key,first,last);
+  if (range.endAt <= range.startAt) {
+    note('Dieser Zeitraum ist an diesem Tag nicht verfügbar.');
+    return;
+  }
+  const conflict = workConflict(data,range.startAt,range.endAt);
+  if (conflict) note(conflict);
+  else entryEditor('',null,range,true);
+});
+main.addEventListener('pointercancel', event => {
+  if (gridDrag?.pointerId === event.pointerId) {
+    suppressGridClick = true;
+    cancelGridSelection();
+  }
+});
+main.addEventListener('lostpointercapture', event => {
+  if (gridDrag?.pointerId === event.pointerId) {
+    suppressGridClick = true;
+    cancelGridSelection();
+  }
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && gridDrag) {
+    suppressGridClick = true;
+    cancelGridSelection();
+    event.preventDefault();
+  }
+});
+document.addEventListener('click', event => {
+  if (suppressGridClick && event.detail && event.target.closest('[data-work-day]')) {
+    suppressGridClick = false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+},true);
+
 function workGrid() {
   const anchor = dayStart(date), monday = offsetDay(anchor,-((anchor.getDay()+6)%7));
   const [,from,to] = bands.find(item => item[0] === band);
@@ -289,13 +408,11 @@ function workGrid() {
     const day = offsetDay(monday,index), key = dateKey(day);
     return {name,day,key,planned:scheduledOn(key),entries:rangeEntries(+day,+offsetDay(day,1),now)};
   });
-  const timeAt = (key,minute) => minute === 1440
-    ? +offsetDay(dayStart(key),1) : +new Date(key+'T'+gridTime(minute));
   const rows = [];
-  for (let minute = from; minute < to; minute += 15) {
+  for (let minute = from; minute < to; minute += quarterMinutes) {
     const time = gridTime(minute);
     const cells = columns.map(({key,name,planned,entries}) => {
-      const rowStart = timeAt(key,minute), rowEnd = timeAt(key,minute+15);
+      const rowStart = gridInstant(key,minute), rowEnd = gridInstant(key,minute+quarterMinutes);
       const overlaps = (start,end) => start < rowEnd && end > rowStart;
       const first = start => minute === from || start >= rowStart;
       const blocks = [];
@@ -305,14 +422,21 @@ function workGrid() {
         blocks.push(first(slot.startAt) ? gridCard(slot.replacementKey ? {...slot,id:slot.replacementKey} : slot,slot.replacementKey ? 'lessonReplace' : 'slot',slot.start+'–'+slot.end+' · Plan',color)
           : `<div class="grid-cont ${color}" aria-hidden="true"></div>`);
       }
+      let recorded = false, continuesAfter = false;
       for (const entry of entries) {
         const end = entry.end ?? Math.max(now,entry.start+1);
         if (!overlaps(entry.start,end)) continue;
         const caption = localTime(new Date(entry.start))+'–'+(entry.end === null ? 'läuft · Stoppen' : localTime(new Date(entry.end)));
-        blocks.push(first(entry.start) ? gridCard(entry,entry.end === null ? 'stop' : 'entry',caption,'grid-record')
-          : '<div class="grid-cont grid-record" aria-hidden="true"></div>');
+        recorded = true;
+        continuesAfter ||= end > rowEnd && minute+quarterMinutes < to;
+        const action = entry.end === null ? 'stop' : 'workEdit';
+        blocks.push(first(entry.start) ? gridCard(entry,action,caption,'grid-record')
+          : `<button type="button" class="grid-record grid-record-cont" data-action="${action}"
+            data-value="${escape(entry.id)}" aria-label="${escape((entry.title || label(entry))+' · '+caption)}"></button>`);
       }
-      return `<td>${blocks.join('')}${gridAdd('workCell',key+'|'+time,'Eintrag am '+name+' '+key+' um '+time+' hinzufügen')}</td>`;
+      const edges = recorded ? ' work-recorded'+(continuesAfter ? ' record-after' : '') : '';
+      return `<td class="work-cell${edges}" data-work-day="${key}" data-work-minute="${minute}">${blocks.join('')}
+        ${recorded ? '' : gridAdd('workCell',key+'|'+time,'Eintrag am '+name+' '+key+' um '+time+' hinzufügen')}</td>`;
     });
     rows.push(`<tr><th scope="row">${time}</th>${cells.join('')}</tr>`);
   }
@@ -336,7 +460,7 @@ function planView() {
     ${weeklyGrid()}</section>${balanceView()}
     <section class="week-card"><div class="head"><h2>Arbeitszeitraster</h2><div class="actions">
         <label>Uhrzeit <select id="workBand">${options(bands.map(item => item[0]),band)}</select></label></div></div>
-    <p class="muted section-title">Plantermine sind grün, Vertretungen rosa und erfasste Zeiten blau.</p>${workGrid()}</section>
+    <p class="muted section-title">Ziehe über freie Felder eines Tages, um Arbeitszeit einzutragen. Mit + kannst du auch einen Termin planen.</p>${workGrid()}</section>
     ${custom.length ? `<section><h2 class="section-title">Weitere wöchentliche Termine</h2>${rows(custom)}</section>` : ''}
     <section><h2 class="section-title">Einzeltermine</h2>${rows(single) || '<p class="empty">Hier erscheinen Vertretungen, Aufsichten und Elterngespräche.</p>'}</section>`;
 }
@@ -401,6 +525,7 @@ function settingsView() {
   <section><h2 class="section-title">Dienstort</h2><p>${data.school ? 'Dienstort gespeichert.' : 'Am Schulstandort kannst du den aktuellen Standort als Dienstort speichern.'} Bei geöffneter App kann Lehrzeit prüfen, ob du außerhalb bist, und dir die Frage „Arbeitest du gerade?“ stellen. Anwesenheit startest und beendest du manuell.</p><div class="actions space">${button('Aktuellen Standort speichern','school')}${data.school ? button('Standort prüfen','check')+button('Dienstort entfernen','unSchool','','danger') : ''}</div></section>`;
 }
 function render() {
+  cancelGridSelection();
   main.innerHTML = (readError ? `<p role="alert">${readError}</p>` : '') + ({day:dayView,plan:planView,stats:statsView,settings:settingsView}[tab]());
   for (const item of document.querySelectorAll('[data-tab]')) {
     if (item.dataset.tab === tab) item.setAttribute('aria-current','page');
@@ -427,24 +552,41 @@ function edit(title, fields, handle, extra = '') {
   };
   if (!dialog.open) dialog.showModal();
 }
-function entryEditor(entryId, slot, cell) {
+function entryEditor(entryId, slot, cell, fromGrid = false) {
   const entry = data.entries.find(item => item.id === entryId);
   const now = Date.now();
-  const startAt = entry?.start ?? (cell ? +new Date(cell.key+'T'+cell.time) : slot ? +new Date(date+'T'+slot.start) : date === dateKey(new Date()) ? now-1800000 : +new Date(date+'T08:00'));
-  const endAt = entry?.end ?? (cell ? startAt+900000 : slot ? +new Date(date+'T'+slot.end) : startAt+1800000);
+  const startAt = entry?.start ?? (cell ? cell.startAt : slot ? +new Date(date+'T'+slot.start) : date === dateKey(new Date()) ? now-1800000 : +new Date(date+'T08:00'));
+  const endAt = entry?.end ?? (cell ? cell.endAt : slot ? +new Date(date+'T'+slot.end) : startAt+1800000);
   edit(entry ? 'Zeit bearbeiten' : 'Zeit nachtragen', `
     <label>Tätigkeit <select name="kind">${options([...activities,presence],entry?.kind ?? slot?.kind ?? 'Vorbereitung')}</select></label>
     ${conferenceFields(entry ?? slot)}
     <label>Titel oder Notiz <input name="title" value="${escape(entry?.title ?? slot?.title)}" maxlength="300"></label>
     <div class="field-row"><label>Beginn <input name="start" type="datetime-local" value="${inputTime(startAt)}" required></label>
-    <label>Ende <input name="end" type="datetime-local" value="${inputTime(endAt)}" required></label></div>`, values => {
-    const start = +new Date(values.get('start')), end = +new Date(values.get('end'));
+    <label>Ende <input name="end" type="datetime-local" value="${inputTime(endAt)}" required></label></div>
+    ${fromGrid ? '<p id="entryDuration" aria-live="polite"></p>' : ''}`, values => {
+    const start = entry && fromGrid && inputTime(entry.start) === values.get('start') ? entry.start : +new Date(values.get('start'));
+    const end = entry && fromGrid && inputTime(entry.end) === values.get('end') ? entry.end : +new Date(values.get('end'));
     if (!(end > start && end <= Date.now())) throw new Error('Das Ende muss nach dem Beginn liegen und darf nicht in der Zukunft sein.');
+    const checkConflict = fromGrid && (!entry || entry.start !== start || entry.end !== end || entry.kind !== values.get('kind'));
+    if (checkConflict) {
+      const latest = localStorage.getItem(storageKey);
+      const message = workConflict(latest ? JSON.parse(latest) : data,start,end,entryId,values.get('kind'));
+      if (message) throw new Error(message);
+    }
     return save(db => {
       const updated = {id:entryId || id(), kind:values.get('kind'),...details(values,values.get('kind')),title:values.get('title').trim(),start,end,slot:entry?.slot ?? slot?.id ?? null,day:entry?.day ?? cell?.key ?? date};
       db.entries = [...db.entries.filter(e => e.id !== updated.id), updated];
     });
   }, entry ? button('Löschen','deleteEntry',entry.id,'danger') : '');
+  if (fromGrid) {
+    const displayDuration = () => {
+      const minutes = Math.round((+new Date(editor.elements.end.value)-+new Date(editor.elements.start.value))/60000);
+      editor.querySelector('#entryDuration').textContent = minutes > 0 ? 'Dauer: '+minutes+' Minuten' : 'Dauer: –';
+    };
+    editor.elements.start.addEventListener('input',displayDuration);
+    editor.elements.end.addEventListener('input',displayDuration);
+    displayDuration();
+  }
   bindConferenceFields();
 }
 function slotEditor(slotId, cell) {
@@ -649,6 +791,7 @@ document.addEventListener('click', event => {
       break;
     case 'stop': stop(value); break;
     case 'entry': entryEditor(value); break;
+    case 'workEdit': entryEditor(value,null,null,true); break;
     case 'slot': slotEditor(value); break;
     case 'gridSlot': {
       const [key,time] = value.split('|');
@@ -666,7 +809,10 @@ document.addEventListener('click', event => {
     case 'workPlan': case 'workEntry': {
       const [key,time] = value.split('|');
       if (!isDate(key) || !isTime(time)) break;
-      if (action === 'workEntry') entryEditor('',null,{key,time});
+      if (action === 'workEntry') {
+        const minute = timeMinutes(time), range = gridRange(key,minute,minute);
+        entryEditor('',null,range,true);
+      }
       else slotEditor('',{key,time,end:gridTime(Math.min(1439,timeMinutes(time)+15))});
       break;
     }
@@ -705,7 +851,7 @@ window.addEventListener('storage', event => {
   if (event.key === storageKey && event.newValue) { data = JSON.parse(event.newValue); render(); }
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) prompted = false;
+  if (document.hidden) { prompted = false; cancelGridSelection(); }
   else { render(); checkSchool(); }
 });
 setInterval(updateClock,1000);
