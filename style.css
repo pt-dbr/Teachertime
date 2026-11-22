@@ -29,3 +29,11 @@ dialog{border:1px solid var(--line);border-radius:22px;padding:24px;width:min(92
 .grid-slot small{display:block;font-weight:500;color:var(--muted);font-size:.82rem}
 .grid-duty{background:#fff4d9;color:#583d10;border-color:#ebd7a4}
 .grid-duty:hover{background:#f9e8ba}
+
+.week-grid th:first-child{width:125px}
+.week-grid th small{display:block;font-weight:500;color:var(--muted);white-space:nowrap}
+.week-grid:has(th:nth-child(8)){min-width:835px}
+.grid-plan{background:var(--soft);color:var(--green)}
+.grid-record{background:#e4effb;border-color:#c0d4ed;color:#234c7a}
+.grid-record:hover{background:#d6e6f8}
+.grid-cont{height:8px;border-radius:4px;margin:0 4px 2px}

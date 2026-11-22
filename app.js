@@ -144,36 +144,106 @@ function timeMinutes(time) {
   const [hours,minutes] = time.split(':').map(Number);
   return hours*60+minutes;
 }
+const morning = [
+  ['Frühaufsicht','07:40','07:55','Aufsicht'],
+  ['1. Stunde','07:55','08:55','Unterricht'],
+  ['Erste Pause','08:55','09:10','Aufsicht'],
+  ['2. Stunde','09:10','10:10','Unterricht'],
+  ['3. Stunde','10:15','11:15','Unterricht'],
+  ['Zweite Pause','11:15','11:35','Aufsicht'],
+  ['4. Stunde','11:35','12:35','Unterricht'],
+  ['5. Stunde','12:40','13:40','Unterricht']
+];
+const bands = [['00:00–06:00',0,360],['06:00–14:00',360,840],
+  ['14:00–20:00',840,1200],['20:00–24:00',1200,1440]];
+let band = bands[1][0];
+function gridTable(name, columns, rows) {
+  return `<div class="week-scroll" tabindex="0" aria-label="${name}"><table class="week-grid">
+    <thead><tr><th scope="col">Zeit</th>${columns.map(column => `<th scope="col">${column}</th>`).join('')}</tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+function gridCard(item, action, caption, variant = '') {
+  return `<button type="button" class="grid-slot ${variant}" data-action="${action}" data-value="${escape(item.id)}">
+    <strong>${escape(item.title || label(item))}</strong><small>${escape(caption)}</small></button>`;
+}
+function gridAdd(action,value,description) {
+  return `<button type="button" class="grid-add" data-action="${action}" data-value="${value}"
+    aria-label="${description}">+</button>`;
+}
 function weeklyGrid(slots) {
-  const days = slots.some(slot => slot.day === 6 || slot.day === 0)
-    ? [1,2,3,4,5,6,0] : [1,2,3,4,5];
-  const times = new Set(slots.map(slot => slot.start));
-  for (let minute = 8*60; minute <= 16*60; minute += 30) times.add(gridTime(minute));
-  const rows = [...times].sort().map(time => {
-    const cells = days.map(day => {
-      const entries = slots.filter(slot => slot.day === day && slot.start === time);
-      const add = `<button type="button" class="grid-add" data-action="gridSlot" data-value="${day}|${time}"
-        aria-label="Termin am ${schoolDays[(day+6)%7]} um ${time} hinzufügen">+</button>`;
-      const booked = entries.map(slot => `<button type="button" class="grid-slot${slot.kind === 'Aufsicht' ? ' grid-duty' : ''}"
-        data-action="slot" data-value="${escape(slot.id)}"><strong>${escape(slot.title || label(slot))}</strong>
-        <small>${slot.start}–${slot.end}${slot.title && slot.kind !== 'Unterricht' ? ' · '+escape(label(slot)) : ''}</small></button>`).join('');
-      return `<td>${booked}${add}</td>`;
-    }).join('');
-    return `<tr><th scope="row">${time}</th>${cells}</tr>`;
-  }).join('');
-  return `<div class="week-scroll" tabindex="0" aria-label="Wochenraster">
-    <table class="week-grid"><thead><tr><th scope="col">Zeit</th>
-    ${days.map(day => `<th scope="col">${schoolDays[(day+6)%7]}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  const rows = morning.map(([name,start,end]) => {
+    const cells = schoolDays.slice(0,5).map((day,index) => {
+      const booked = slots.filter(slot => slot.day === index+1 && slot.start === start)
+        .map(slot => gridCard(slot,'slot',slot.start+'–'+slot.end,slot.kind === 'Aufsicht' ? 'grid-duty' : '')).join('');
+      return `<td>${booked}${gridAdd('gridSlot',(index+1)+'|'+start,name+' am '+day+' hinzufügen')}</td>`;
+    });
+    return `<tr><th scope="row">${name}<small>${start}–${end}</small></th>${cells.join('')}</tr>`;
+  });
+  return gridTable('Vormittagsplan',schoolDays.slice(0,5),rows.join(''));
+}
+function scheduledOn(key) {
+  return slotsFor(key).map(slot => ({
+    ...slot, startAt:+new Date(key+'T'+slot.start), endAt:+new Date(key+'T'+slot.end)
+  })).filter(slot => slot.endAt > slot.startAt);
+}
+function workGrid() {
+  const anchor = dayStart(date), monday = offsetDay(anchor,-((anchor.getDay()+6)%7));
+  const [,from,to] = bands.find(item => item[0] === band);
+  const now = Date.now();
+  const columns = schoolDays.map((name,index) => {
+    const day = offsetDay(monday,index), key = dateKey(day);
+    return {name,day,key,planned:scheduledOn(key),entries:rangeEntries(+day,+offsetDay(day,1),now)};
+  });
+  const timeAt = (key,minute) => minute === 1440
+    ? +offsetDay(dayStart(key),1) : +new Date(key+'T'+gridTime(minute));
+  const rows = [];
+  for (let minute = from; minute < to; minute += 15) {
+    const time = gridTime(minute);
+    const cells = columns.map(({key,name,planned,entries}) => {
+      const rowStart = timeAt(key,minute), rowEnd = timeAt(key,minute+15);
+      const overlaps = (start,end) => start < rowEnd && end > rowStart;
+      const first = start => minute === from || start >= rowStart;
+      const blocks = [];
+      for (const slot of planned) {
+        if (!overlaps(slot.startAt,slot.endAt)) continue;
+        const color = slot.kind === 'Vertretung' ? 'grid-duty' : 'grid-plan';
+        blocks.push(first(slot.startAt) ? gridCard(slot,'slot',slot.start+'–'+slot.end+' · Plan',color)
+          : `<div class="grid-cont ${color}" aria-hidden="true"></div>`);
+      }
+      for (const entry of entries) {
+        const end = entry.end ?? Math.max(now,entry.start+1);
+        if (!overlaps(entry.start,end)) continue;
+        const caption = localTime(new Date(entry.start))+'–'+(entry.end === null ? 'läuft · Stoppen' : localTime(new Date(entry.end)));
+        blocks.push(first(entry.start) ? gridCard(entry,entry.end === null ? 'stop' : 'entry',caption,'grid-record')
+          : '<div class="grid-cont grid-record" aria-hidden="true"></div>');
+      }
+      return `<td>${blocks.join('')}${gridAdd('workCell',key+'|'+time,'Eintrag am '+name+' '+key+' um '+time+' hinzufügen')}</td>`;
+    });
+    rows.push(`<tr><th scope="row">${time}</th>${cells.join('')}</tr>`);
+  }
+  const headers = columns.map(({name,day}) => name+'<small>'+pad(day.getDate())+'.'+pad(day.getMonth()+1)+'.</small>');
+  return gridTable('Arbeitszeitraster',headers,rows.join(''));
+}
+function workCell(value) {
+  const [key,time] = value.split('|');
+  if (!isDate(key) || !isTime(time)) return;
+  edit('Was möchtest du eintragen?',`<p>${dateLabel(dayStart(key))} · ${time}</p><div class="actions">
+    ${button('Termin planen','workPlan',value)}${button('Arbeitszeit nachtragen','workEntry',value)}</div>`,() => false);
+  editor.querySelector('.primary').hidden = true;
 }
 function planView() {
   const weekly = data.slots.filter(slot => slot.weekly);
+  const custom = weekly.filter(slot => slot.day < 1 || slot.day > 5 || !morning.some(block => block[1] === slot.start));
   const single = data.slots.filter(s => !s.weekly).sort((a,b) => (a.day+a.start).localeCompare(b.day+b.start));
-  const rows = single.map(s => `<div class="row"><div><strong>${escape(s.title || label(s))}</strong><small>${dateLabel(dayStart(s.day))} · ${s.start}–${s.end} · ${escape(label(s))}</small></div>${button('Bearbeiten','slot',s.id)}</div>`).join('');
+  const rows = items => items.map(s => `<div class="row"><div><strong>${escape(s.title || label(s))}</strong><small>${s.weekly ? weekdays[s.day] : dateLabel(dayStart(s.day))} · ${s.start}–${s.end} · ${escape(label(s))}</small></div>${button('Bearbeiten','slot',s.id)}</div>`).join('');
   return heading('Stundenplan',button('CSV importieren','csv')+button('+ Termin','slot','','primary'))+
-    `<section class="week-card"><h2 class="section-title">Wochenplan</h2>
-    <p class="muted section-title">Tippe auf +, um Unterricht oder eine Pausenaufsicht einzutragen.</p>
-    ${weeklyGrid(weekly)}</section>
-    <section><h2 class="section-title">Einzeltermine</h2>${rows || '<p class="empty">Hier erscheinen Vertretungen, Aufsichten und Elterngespräche.</p>'}</section>`;
+    `<section class="week-card"><h2 class="section-title">Vormittagsplan</h2>${weeklyGrid(weekly)}</section>
+    <section class="week-card"><div class="head"><h2>Arbeitszeitraster</h2><div class="actions">
+    ${button('Vorige Woche','weekStep','-7')}${dateInput()}${button('Nächste Woche','weekStep','7')}
+    <label>Uhrzeit <select id="workBand">${options(bands.map(item => item[0]),band)}</select></label></div></div>
+    <p class="muted section-title">Plantermine sind grün, Vertretungen gelb und erfasste Zeiten blau.</p>${workGrid()}</section>
+    ${custom.length ? `<section><h2 class="section-title">Weitere wöchentliche Termine</h2>${rows(custom)}</section>` : ''}
+    <section><h2 class="section-title">Einzeltermine</h2>${rows(single) || '<p class="empty">Hier erscheinen Vertretungen, Aufsichten und Elterngespräche.</p>'}</section>`;
 }
 function reportRange() {
   const d = dayStart(date);
@@ -193,17 +263,28 @@ function union(ranges) {
 }
 function statsView() {
   const [a,b] = reportRange(), now = Date.now();
-  const entries = rangeEntries(+a,+b,now);
-  const sum = predicate => union(entries.filter(predicate).map(e => [Math.max(e.start,+a),Math.min(e.end ?? now,+b)]));
-  const work = sum(e => e.kind !== presence), atSchool = sum(e => e.kind === presence);
+  const clip = (start,end,limit = +b) => [Math.max(start,+a),Math.min(end,limit)];
+  const entries = rangeEntries(+a,+b,now).map(entry => ({
+    ...entry, range:clip(entry.start,entry.end ?? now,Math.min(now,+b))
+  }));
+  const actual = entries.filter(entry => entry.kind !== presence);
   const planned = [];
-  for (let day = a; day < b; day = offsetDay(day,1)) {
-    const key = dateKey(day);
-    for (const slot of slotsFor(key)) {
-      const start = +new Date(key+'T'+slot.start), end = +new Date(key+'T'+slot.end);
-      if (end > start) planned.push([start,end]);
-    }
-  }
+  for (let day = a; day < b; day = offsetDay(day,1)) planned.push(...scheduledOn(dateKey(day)));
+  const automatic = planned.filter(slot => (slot.weekly || slot.kind === 'Vertretung') && slot.endAt <= now)
+    .map(slot => ({...slot,range:clip(slot.startAt,slot.endAt)}));
+  const covers = automatic.filter(slot => slot.kind === 'Vertretung').map(slot => slot.range);
+  const actualRanges = actual.map(entry => entry.range);
+  const remaining = automatic.flatMap(slot => {
+    const occupied = slot.kind === 'Unterricht' ? [...actualRanges,...covers] : actualRanges;
+    const fragments = occupied.reduce((ranges,[start,end]) => ranges.flatMap(([left,right]) => {
+      if (right <= start || left >= end) return [[left,right]];
+      return [[left,Math.min(start,right)],[Math.max(end,left),right]].filter(([x,y]) => y > x);
+    }),[slot.range]);
+    return fragments.map(range => ({...slot,range}));
+  });
+  const sum = predicate => union([...actual,...remaining].filter(predicate).map(item => item.range));
+  const work = sum(() => true);
+  const atSchool = union(entries.filter(entry => entry.kind === presence).map(entry => entry.range));
   const rows = activities.map(kind => {
     const time = sum(e => e.kind === kind);
     const breakdown = kind === conference ? types.map(type => {
@@ -214,11 +295,11 @@ function statsView() {
   }).join('');
   return heading('Statistik', dateInput()+`<label>Zeitraum <select id="period">${options(['Tag','Woche','Monat'],period)}</select></label>`)+
     `<p class="muted">${dateLabel(a)}${period === 'Tag' ? '' : ' – '+dateLabel(offsetDay(b,-1))}</p>
-    <div class="metrics"><section><h2>Erfasste Arbeitszeit</h2><span class="metric">${duration(work)}</span></section>
+    <div class="metrics"><section><h2>Arbeitszeit</h2><span class="metric">${duration(work)}</span><p class="muted">Erfasste Zeiten und abgeschlossene Stundenplantermine</p></section>
     <section><h2>Anwesenheit</h2><span class="metric">${duration(atSchool)}</span></section>
-    <section><h2>Planzeit</h2><span class="metric">${duration(union(planned))}</span><p class="muted">Termine aus dem Stundenplan</p></section></div>
+    <section><h2>Planzeit</h2><span class="metric">${duration(union(planned.map(slot => clip(slot.startAt,slot.endAt))))}</span><p class="muted">Termine aus dem Stundenplan</p></section></div>
     <section><h2 class="section-title">Nach Tätigkeit</h2>${rows || '<p class="empty">Keine Arbeitszeit im gewählten Zeitraum.</p>'}
-    <p class="muted space">Planzeit und gebuchte Arbeitszeit haben eigene Summen. Buche einzelne Termine im Tagesplan über „Erfassen“. Überschneidungen zählen je Summe einmal.</p></section>`;
+    <p class="muted space">Abgelaufene Wochenplantermine und Vertretungen zählen automatisch. Andere Einzeltermine zählen nach der Erfassung. Überschneidungen zählen in der Arbeitszeit einmal.</p></section>`;
 }
 function settingsView() {
   return heading('Einstellungen')+`<section><h2 class="section-title">Deine Daten</h2><p>Lehrzeit speichert Einträge, Stundenplan und Dienstort in diesem Browser. Beim Löschen der Website-Daten gehen die Einträge verloren. Sichere deine Daten bei Bedarf in „Auf meinem iPad“.</p><div class="actions space">${button('Sicherung laden','restore')}${button('Sicherung speichern','export')}</div></section>
@@ -251,11 +332,11 @@ function edit(title, fields, handle, extra = '') {
   };
   if (!dialog.open) dialog.showModal();
 }
-function entryEditor(entryId, slot) {
+function entryEditor(entryId, slot, cell) {
   const entry = data.entries.find(item => item.id === entryId);
   const now = Date.now();
-  const startAt = entry?.start ?? (slot ? +new Date(date+'T'+slot.start) : date === dateKey(new Date()) ? now-1800000 : +new Date(date+'T08:00'));
-  const endAt = entry?.end ?? (slot ? +new Date(date+'T'+slot.end) : startAt+1800000);
+  const startAt = entry?.start ?? (cell ? +new Date(cell.key+'T'+cell.time) : slot ? +new Date(date+'T'+slot.start) : date === dateKey(new Date()) ? now-1800000 : +new Date(date+'T08:00'));
+  const endAt = entry?.end ?? (cell ? startAt+900000 : slot ? +new Date(date+'T'+slot.end) : startAt+1800000);
   edit(entry ? 'Zeit bearbeiten' : 'Zeit nachtragen', `
     <label>Tätigkeit <select name="kind">${options([...activities,presence],entry?.kind ?? slot?.kind ?? 'Vorbereitung')}</select></label>
     ${conferenceFields(entry ?? slot)}
@@ -265,7 +346,7 @@ function entryEditor(entryId, slot) {
     const start = +new Date(values.get('start')), end = +new Date(values.get('end'));
     if (!(end > start && end <= Date.now())) throw new Error('Das Ende muss nach dem Beginn liegen und darf nicht in der Zukunft sein.');
     return save(db => {
-      const updated = {id:entryId || id(), kind:values.get('kind'),...details(values,values.get('kind')),title:values.get('title').trim(),start,end,slot:entry?.slot ?? slot?.id ?? null,day:entry?.day ?? date};
+      const updated = {id:entryId || id(), kind:values.get('kind'),...details(values,values.get('kind')),title:values.get('title').trim(),start,end,slot:entry?.slot ?? slot?.id ?? null,day:entry?.day ?? cell?.key ?? date};
       db.entries = [...db.entries.filter(e => e.id !== updated.id), updated];
     });
   }, entry ? button('Löschen','deleteEntry',entry.id,'danger') : '');
@@ -273,16 +354,16 @@ function entryEditor(entryId, slot) {
 }
 function slotEditor(slotId, cell) {
   const slot = data.slots.find(item => item.id === slotId);
-  const weekly = slot?.weekly ?? true;
+  const weekly = slot?.weekly ?? !cell?.key;
   const start = slot?.start ?? cell?.time ?? '08:00';
-  const end = slot?.end ?? gridTime(Math.min(1439,timeMinutes(start)+45));
+  const end = slot?.end ?? cell?.end ?? gridTime(Math.min(1439,timeMinutes(start)+45));
   edit(slot ? 'Termin bearbeiten' : 'Termin hinzufügen', `
-    <label>Tätigkeit <select name="kind">${options(activities,slot?.kind)}</select></label>
+    <label>Tätigkeit <select name="kind">${options(activities,slot?.kind ?? cell?.kind)}</select></label>
     ${conferenceFields(slot)}
     <label><span id="slot-title-label">Fach oder Titel</span> <input name="title" maxlength="300" value="${escape(slot?.title)}"></label>
     <label class="inline"><input type="checkbox" name="weekly"${weekly ? ' checked' : ''}> Wöchentlich wiederholen</label>
-    <label id="weekday">Wochentag <select name="weekday">${options(weekdays,slot?.weekly ? weekdays[+slot.day] : weekdays[cell?.day ?? dayStart(date).getDay()])}</select></label>
-    <label id="slotDate">Datum <input type="date" name="date" value="${escape(slot && !slot.weekly ? slot.day : date)}" required></label>
+    <label id="weekday">Wochentag <select name="weekday">${options(weekdays,slot?.weekly ? weekdays[+slot.day] : weekdays[cell?.day ?? dayStart(cell?.key ?? date).getDay()])}</select></label>
+    <label id="slotDate">Datum <input type="date" name="date" value="${escape(slot && !slot.weekly ? slot.day : cell?.key ?? date)}" required></label>
     <div class="field-row"><label>Beginn <input type="time" name="start" value="${start}" required></label><label>Ende <input type="time" name="end" value="${end}" required></label></div>`, values => {
     if (values.get('end') <= values.get('start')) throw new Error('Das Ende muss nach dem Beginn liegen.');
     const repeats = values.has('weekly');
@@ -465,7 +546,21 @@ document.addEventListener('click', event => {
     case 'slot': slotEditor(value); break;
     case 'gridSlot': {
       const [day,time] = value.split('|');
-      slotEditor('',{day:Number(day),time});
+      const block = morning.find(item => item[1] === time);
+      if (block) slotEditor('',{day:Number(day),time,end:block[2],kind:block[3]});
+      break;
+    }
+    case 'workCell': workCell(value); break;
+    case 'workPlan': case 'workEntry': {
+      const [key,time] = value.split('|');
+      if (!isDate(key) || !isTime(time)) break;
+      if (action === 'workEntry') entryEditor('',null,{key,time});
+      else slotEditor('',{key,time,end:gridTime(Math.min(1439,timeMinutes(time)+15))});
+      break;
+    }
+    case 'weekStep': {
+      date = dateKey(offsetDay(dayStart(date),Number(value)));
+      render();
       break;
     }
     case 'book': book(value); break;
@@ -490,6 +585,7 @@ main.addEventListener('change', event => {
   const {id,value} = event.target;
   if (id === 'date' && isDate(value)) date = value;
   else if (id === 'period') period = value;
+  else if (id === 'workBand') band = value;
   else return;
   render();
 });
