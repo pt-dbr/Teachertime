@@ -138,13 +138,42 @@ function dayView() {
       <section><h2 class="section-title">Tagesplan</h2>${planRows || '<p class="empty">Für diesen Tag ist nichts geplant.</p>'}</section>
       <section><h2 class="section-title">Erfasste Zeiten</h2>${entryRows || '<p class="empty">Hier erscheinen deine Buchungen.</p>'}</section>`;
 }
+const schoolDays = ['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'];
+function gridTime(minutes) { return pad(Math.floor(minutes/60)) + ':' + pad(minutes%60); }
+function timeMinutes(time) {
+  const [hours,minutes] = time.split(':').map(Number);
+  return hours*60+minutes;
+}
+function weeklyGrid(slots) {
+  const days = slots.some(slot => slot.day === 6 || slot.day === 0)
+    ? [1,2,3,4,5,6,0] : [1,2,3,4,5];
+  const times = new Set(slots.map(slot => slot.start));
+  for (let minute = 8*60; minute <= 16*60; minute += 30) times.add(gridTime(minute));
+  const rows = [...times].sort().map(time => {
+    const cells = days.map(day => {
+      const entries = slots.filter(slot => slot.day === day && slot.start === time);
+      const add = `<button type="button" class="grid-add" data-action="gridSlot" data-value="${day}|${time}"
+        aria-label="Termin am ${schoolDays[(day+6)%7]} um ${time} hinzufügen">+</button>`;
+      const booked = entries.map(slot => `<button type="button" class="grid-slot${slot.kind === 'Aufsicht' ? ' grid-duty' : ''}"
+        data-action="slot" data-value="${escape(slot.id)}"><strong>${escape(slot.title || label(slot))}</strong>
+        <small>${slot.start}–${slot.end}${slot.title && slot.kind !== 'Unterricht' ? ' · '+escape(label(slot)) : ''}</small></button>`).join('');
+      return `<td>${booked}${add}</td>`;
+    }).join('');
+    return `<tr><th scope="row">${time}</th>${cells}</tr>`;
+  }).join('');
+  return `<div class="week-scroll" tabindex="0" aria-label="Wochenraster">
+    <table class="week-grid"><thead><tr><th scope="col">Zeit</th>
+    ${days.map(day => `<th scope="col">${schoolDays[(day+6)%7]}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
 function planView() {
-  const weekly = data.slots.filter(s => s.weekly).sort((a,b) => ((+a.day+6)%7)-((+b.day+6)%7)||a.start.localeCompare(b.start));
+  const weekly = data.slots.filter(slot => slot.weekly);
   const single = data.slots.filter(s => !s.weekly).sort((a,b) => (a.day+a.start).localeCompare(b.day+b.start));
-  const rows = slots => slots.map(s => `<div class="row"><div><strong>${escape(s.title || label(s))}</strong><small>${escape(s.weekly ? weekdays[+s.day] : dateLabel(dayStart(s.day)))} · ${s.start}–${s.end} · ${escape(label(s))}</small></div>${button('Bearbeiten','slot',s.id)}</div>`).join('');
+  const rows = single.map(s => `<div class="row"><div><strong>${escape(s.title || label(s))}</strong><small>${dateLabel(dayStart(s.day))} · ${s.start}–${s.end} · ${escape(label(s))}</small></div>${button('Bearbeiten','slot',s.id)}</div>`).join('');
   return heading('Stundenplan',button('CSV importieren','csv')+button('+ Termin','slot','','primary'))+
-    `<section><h2 class="section-title">Wöchentlich</h2>${rows(weekly) || '<p class="empty">Lege wiederkehrenden Unterricht und Aufsichten an.</p>'}</section>
-    <section><h2 class="section-title">Einzeltermine</h2>${rows(single) || '<p class="empty">Hier erscheinen Vertretungen, Aufsichten und Elterngespräche.</p>'}</section>`;
+    `<section class="week-card"><h2 class="section-title">Wochenplan</h2>
+    <p class="muted section-title">Tippe auf +, um Unterricht oder eine Pausenaufsicht einzutragen.</p>
+    ${weeklyGrid(weekly)}</section>
+    <section><h2 class="section-title">Einzeltermine</h2>${rows || '<p class="empty">Hier erscheinen Vertretungen, Aufsichten und Elterngespräche.</p>'}</section>`;
 }
 function reportRange() {
   const d = dayStart(date);
@@ -242,17 +271,19 @@ function entryEditor(entryId, slot) {
   }, entry ? button('Löschen','deleteEntry',entry.id,'danger') : '');
   bindConferenceFields();
 }
-function slotEditor(slotId) {
+function slotEditor(slotId, cell) {
   const slot = data.slots.find(item => item.id === slotId);
   const weekly = slot?.weekly ?? true;
+  const start = slot?.start ?? cell?.time ?? '08:00';
+  const end = slot?.end ?? gridTime(Math.min(1439,timeMinutes(start)+45));
   edit(slot ? 'Termin bearbeiten' : 'Termin hinzufügen', `
     <label>Tätigkeit <select name="kind">${options(activities,slot?.kind)}</select></label>
     ${conferenceFields(slot)}
-    <label>Titel, z. B. Mathematik 7b <input name="title" maxlength="300" value="${escape(slot?.title)}"></label>
+    <label><span id="slot-title-label">Fach oder Titel</span> <input name="title" maxlength="300" value="${escape(slot?.title)}"></label>
     <label class="inline"><input type="checkbox" name="weekly"${weekly ? ' checked' : ''}> Wöchentlich wiederholen</label>
-    <label id="weekday">Wochentag <select name="weekday">${options(weekdays,slot?.weekly ? weekdays[+slot.day] : weekdays[dayStart(date).getDay()])}</select></label>
+    <label id="weekday">Wochentag <select name="weekday">${options(weekdays,slot?.weekly ? weekdays[+slot.day] : weekdays[cell?.day ?? dayStart(date).getDay()])}</select></label>
     <label id="slotDate">Datum <input type="date" name="date" value="${escape(slot && !slot.weekly ? slot.day : date)}" required></label>
-    <div class="field-row"><label>Beginn <input type="time" name="start" value="${slot?.start ?? '08:00'}" required></label><label>Ende <input type="time" name="end" value="${slot?.end ?? '08:45'}" required></label></div>`, values => {
+    <div class="field-row"><label>Beginn <input type="time" name="start" value="${start}" required></label><label>Ende <input type="time" name="end" value="${end}" required></label></div>`, values => {
     if (values.get('end') <= values.get('start')) throw new Error('Das Ende muss nach dem Beginn liegen.');
     const repeats = values.has('weekly');
     return save(db => {
@@ -266,6 +297,13 @@ function slotEditor(slotId) {
     editor.querySelector('#weekday').hidden = !toggle.checked;
     editor.querySelector('#slotDate').hidden = toggle.checked;
   };
+  const kind = editor.elements.kind;
+  const updateTitle = () => {
+    editor.querySelector('#slot-title-label').textContent = kind.value === 'Aufsicht' ? 'Pausenbereich' : 'Fach oder Titel';
+    editor.elements.title.placeholder = kind.value === 'Aufsicht' ? 'z. B. Schulhof' : 'z. B. Mathematik 7b';
+  };
+  kind.addEventListener('change',updateTitle);
+  updateTitle();
   toggle.onchange = visibility;
   visibility();
 }
@@ -425,6 +463,11 @@ document.addEventListener('click', event => {
     case 'stop': stop(value); break;
     case 'entry': entryEditor(value); break;
     case 'slot': slotEditor(value); break;
+    case 'gridSlot': {
+      const [day,time] = value.split('|');
+      slotEditor('',{day:Number(day),time});
+      break;
+    }
     case 'book': book(value); break;
     case 'bookEdit': case 'bookExact': case 'bookStart': bookAction(action,value); break;
     case 'deleteEntry': deleteItem('entries',value); break;

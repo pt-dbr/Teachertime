@@ -15,3 +15,17 @@ dialog{border:1px solid var(--line);border-radius:22px;padding:24px;width:min(92
 @media(max-width:460px){main{padding-inline:14px}header{padding-inline:14px}section{padding:16px}nav{gap:1px}nav button{padding-inline:7px}.local{max-width:65px;line-height:1.1;text-align:right}.field-row{grid-template-columns:1fr}}
 
 [hidden]{display:none!important}
+
+.week-scroll{overflow:auto;border:1px solid var(--line);border-radius:12px}
+.week-grid{border-spacing:0;table-layout:fixed;width:100%;min-width:660px;font-size:.875rem}
+.week-grid th,.week-grid td{padding:5px;vertical-align:top;border-bottom:1px solid var(--line);border-right:1px solid var(--line)}
+.week-grid thead th{background:var(--soft);text-align:left;padding:10px 7px}
+.week-grid th:first-child{position:sticky;left:0;width:65px;background:var(--soft);text-align:center;vertical-align:middle}
+.week-grid td:last-child,.week-grid th:last-child{border-right:0}
+.week-grid tbody tr:last-child>*{border-bottom:0}
+.week-grid button{width:100%;display:block}
+.grid-add{color:var(--muted);border-color:transparent;background:transparent;font-size:1.1rem;padding:0}
+.grid-slot{background:var(--soft);text-align:left;margin-bottom:3px;overflow-wrap:anywhere;padding:7px 8px}
+.grid-slot small{display:block;font-weight:500;color:var(--muted);font-size:.82rem}
+.grid-duty{background:#fff4d9;color:#583d10;border-color:#ebd7a4}
+.grid-duty:hover{background:#f9e8ba}
