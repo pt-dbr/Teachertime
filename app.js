@@ -598,10 +598,14 @@ function statsView() {
     }),[slot.range]);
     return fragments.map(range => ({...slot,range}));
   });
-  const sum = predicate => union([...actual,...remaining].filter(predicate).map(item => item.range));
-  const work = sum(() => true);
+  const activitiesForReport = [...actual,...remaining];
+  const activityRanges = activitiesForReport.map(item => item.range);
+  const presenceRanges = entries.filter(item => item.kind === presence).map(item => item.range);
+  const sum = predicate => union(activitiesForReport.filter(predicate).map(item => item.range));
+  const work = union([...activityRanges,...presenceRanges]);
+  const unassignedPresence = work-union(activityRanges);
+  const atSchool = union(presenceRanges);
   const credit = period === 'Tag' ? 0 : allowanceInRange(a,b,now);
-  const atSchool = union(entries.filter(entry => entry.kind === presence).map(entry => entry.range));
   const rows = activities.map(kind => {
     const time = sum(e => e.kind === kind);
     const breakdown = kind === conference ? types.map(type => {
@@ -612,11 +616,12 @@ function statsView() {
   }).join('');
   return heading('Statistik', dateInput()+`<label>Zeitraum <select id="period">${options(['Tag','Woche','Monat'],period)}</select></label>`)+
     `<p class="muted">${dateLabel(a)}${period === 'Tag' ? '' : ' – '+dateLabel(offsetDay(b,-1))}</p>
-    <div class="metrics"><section><h2>Arbeitszeit</h2><span class="metric">${duration(work+credit)}</span><p class="muted">${credit ? 'Inklusive Ermäßigungsstunden' : 'Erfasste Zeiten und abgeschlossene Stundenplantermine'}</p></section>
+    <div class="metrics"><section><h2>Arbeitszeit</h2><span class="metric">${duration(work+credit)}</span><p class="muted">${credit ? 'Inklusive Anwesenheit und Ermäßigungsstunden' : 'Inklusive Anwesenheit am Dienstort'}</p></section>
     ${credit ? `<section><h2>Ermäßigungsstunden</h2><span class="metric">${duration(credit)}</span><p class="muted">In der Arbeitszeit enthalten</p></section>` : ''}
-    <section><h2>Anwesenheit</h2><span class="metric">${duration(atSchool)}</span></section>
+    <section><h2>Anwesenheit</h2><span class="metric">${duration(atSchool)}</span><p class="muted">Davon ${duration(unassignedPresence)} ohne bereits gezählte Tätigkeit</p></section>
     <section><h2>Planzeit</h2><span class="metric">${duration(union(planned.map(slot => clip(slot.startAt,slot.endAt))))}</span><p class="muted">Termine aus dem Stundenplan</p></section></div>
-    <section><h2 class="section-title">Nach Tätigkeit</h2>${rows || '<p class="empty">Keine Arbeitszeit im gewählten Zeitraum.</p>'}
+    <section><h2 class="section-title">Nach Tätigkeit</h2>${rows || (!unassignedPresence ? '<p class="empty">Keine Arbeitszeit im gewählten Zeitraum.</p>' : '')}
+    ${unassignedPresence ? `<div class="row"><strong>Anwesenheit ohne Zuordnung</strong><span>${duration(unassignedPresence)}</span></div>` : ''}
     <p class="muted space">Abgelaufene Wochenplantermine und Vertretungen zählen automatisch. Andere Einzeltermine zählen nach der Erfassung. Überschneidungen zählen in der Arbeitszeit einmal.</p></section>${balanceView()}`;
 }
 function settingsView() {
