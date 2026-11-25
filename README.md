@@ -1,6 +1,6 @@
 # Lehrzeit für GitHub Pages
 
-Statische, deutschsprachige Zeiterfassung fürs iPad. GitHub Pages liefert die App-Dateien per HTTPS. Einträge, Stundenplan und Dienstort werden nur im lokalen Website-Speicher des Browsers abgelegt. Die App enthält keine Upload-Funktion, keine Analytik, keine externen Bibliotheken und keine Schnittstelle zum Speichern beim Hoster. GitHub erhält beim Abruf der App die üblichen technischen Informationen einer HTTPS-Anfrage.
+Statische, deutschsprachige Zeiterfassung fürs iPad. GitHub Pages liefert die App-Dateien per HTTPS. Einträge und Stundenplan werden nur im lokalen Website-Speicher des Browsers abgelegt. Die App enthält keine Upload-Funktion, keine Analytik, keine externen Bibliotheken und keine Schnittstelle zum Speichern beim Hoster. GitHub erhält beim Abruf der App die üblichen technischen Informationen einer HTTPS-Anfrage.
 
 ## Auf GitHub bereitstellen
 
@@ -29,6 +29,8 @@ Mo;08:00;08:45;Unterricht;Mathematik 7b
 Mo;09:40;09:55;Aufsicht;Pausenhof
 ```
 
-## Standort
+## Anwesenheit und Ermäßigungsstunden
 
-In den Einstellungen kannst du den aktuellen Standort als Dienstort speichern. Dafür braucht Safari deine Standortfreigabe. Die App prüft lokal, ob du außerhalb des Schulumkreises bist, und kann im Vordergrund fragen „Arbeitest du gerade?“. Die Anwesenheit startest und beendest du von Hand. Geschlossene Web-Apps erhalten keine verlässlichen Standortereignisse. Eine Abfrage beim Entsperren des iPads steht ebenfalls nicht zur Verfügung.
+Unter **Tag → Anwesenheit am Arbeitsort** startest und beendest du die Anwesenheit manuell. Die Statistik rechnet Anwesenheit zur Arbeitszeit. Überlappende Tätigkeiten zählen in der Gesamtsumme einmal.
+
+Unter **Einstellungen → Ermäßigungsstunden** legst du die Wochenpauschale fest. Sie erhöht die Planzeit in der Wochenstatistik.

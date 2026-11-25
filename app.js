@@ -10,7 +10,7 @@ const main = document.querySelector('#main');
 const dialog = document.querySelector('#dialog');
 const editor = document.querySelector('#editor');
 let data, readError, tab = 'day', date = dateKey(new Date()), period = 'Tag';
-let noticeTimer, prompted = false;
+let noticeTimer;
 try {
   const stored = localStorage.getItem(storageKey);
   data = stored ? JSON.parse(stored) : {entries: [], slots: [], school: null};
@@ -218,7 +218,7 @@ function dayView() {
     `<section><h2 class="section-title">Arbeitszeit erfassen</h2>${work ?
       `<p>${escape(work.title || label(work))}</p><div class="clock" id="clock"></div>${button('Timer stoppen','stop',work.id,'primary')}` :
       `<div class="grid">${activities.map(kind => button(kind,'start',kind)).join('')}</div>`}
-      <div class="status"><div><strong>Anwesenheit</strong><p class="muted">${atSchool ? 'Seit '+inputTime(atSchool.start).replace('T',' · ') : 'Keine laufende Anwesenheit'}</p></div>
+      <div class="status"><div><strong>Anwesenheit am Arbeitsort</strong><p class="muted">${atSchool ? 'Seit '+inputTime(atSchool.start).replace('T',' · ') : 'Keine laufende Anwesenheit'}</p></div>
       ${atSchool ? button('Anwesenheit beenden','stop',atSchool.id) : button('Anwesenheit starten','start',presence)}</div></section>
       <section><h2 class="section-title">Tagesplan</h2>${planRows || '<p class="empty">Für diesen Tag ist nichts geplant.</p>'}</section>
       <section><h2 class="section-title">Erfasste Zeiten</h2>${entryRows || '<p class="empty">Hier erscheinen deine Buchungen.</p>'}</section>`;
@@ -534,16 +534,6 @@ function allowanceAt(key) {
   return (data.allowances ?? []).reduce((latest,rule) =>
     rule.from <= key && (!latest || rule.from > latest.from) ? rule : latest,null);
 }
-function allowanceInRange(start,end,now) {
-  let total = 0;
-  let monday = mondayFor(dateKey(start));
-  if (monday < start) monday = offsetDay(monday,7);
-  for (; monday < end && +monday <= now; monday = offsetDay(monday,7)) {
-    const rule = allowanceAt(dateKey(monday));
-    if (rule) total += rule.count*rule.minutes*60000;
-  }
-  return total;
-}
 function validAllowance(rule) {
   return rule && isDate(rule.from) && dayStart(rule.from).getDay() === 1
     && Number.isFinite(rule.count) && rule.count >= 0 && rule.count % .25 === 0
@@ -574,7 +564,7 @@ function allowanceSettings() {
     ? rule.count.toLocaleString('de-DE')+' × '+rule.minutes+' Min. pro Woche' : 'Anrechnung beendet'}</strong>
     <small>Ab ${dateLabel(dayStart(rule.from))}</small></div>${button('Bearbeiten','allowance',rule.from)}</div>`).join('');
   return `<section><h2 class="section-title">Ermäßigungsstunden</h2>
-    <p>Die Pauschale zählt zur Wochen- und Monatsarbeitszeit. In der Monatsstatistik zählt sie zum Monat des jeweiligen Montags.</p>
+    <p>Die Pauschale fließt in die Planzeit der Wochenstatistik ein.</p>
     <div class="actions space">${button('Pauschale einstellen','allowance')}</div>${rows}</section>`;
 }
 function statsView() {
@@ -605,7 +595,9 @@ function statsView() {
   const work = union([...activityRanges,...presenceRanges]);
   const unassignedPresence = work-union(activityRanges);
   const atSchool = union(presenceRanges);
-  const credit = period === 'Tag' ? 0 : allowanceInRange(a,b,now);
+  const weeklyAllowance = period === 'Woche' ? allowanceAt(dateKey(a)) : null;
+  const planTime = union(planned.map(slot => clip(slot.startAt,slot.endAt))) +
+    (weeklyAllowance ? weeklyAllowance.count*weeklyAllowance.minutes*60000 : 0);
   const rows = activities.map(kind => {
     const time = sum(e => e.kind === kind);
     const breakdown = kind === conference ? types.map(type => {
@@ -616,17 +608,16 @@ function statsView() {
   }).join('');
   return heading('Statistik', dateInput()+`<label>Zeitraum <select id="period">${options(['Tag','Woche','Monat'],period)}</select></label>`)+
     `<p class="muted">${dateLabel(a)}${period === 'Tag' ? '' : ' – '+dateLabel(offsetDay(b,-1))}</p>
-    <div class="metrics"><section><h2>Arbeitszeit</h2><span class="metric">${duration(work+credit)}</span><p class="muted">${credit ? 'Inklusive Anwesenheit und Ermäßigungsstunden' : 'Inklusive Anwesenheit am Dienstort'}</p></section>
-    ${credit ? `<section><h2>Ermäßigungsstunden</h2><span class="metric">${duration(credit)}</span><p class="muted">In der Arbeitszeit enthalten</p></section>` : ''}
+    <div class="metrics"><section><h2>Arbeitszeit</h2><span class="metric">${duration(work)}</span><p class="muted">Inklusive Anwesenheit am Dienstort</p></section>
     <section><h2>Anwesenheit</h2><span class="metric">${duration(atSchool)}</span><p class="muted">Davon ${duration(unassignedPresence)} ohne bereits gezählte Tätigkeit</p></section>
-    <section><h2>Planzeit</h2><span class="metric">${duration(union(planned.map(slot => clip(slot.startAt,slot.endAt))))}</span><p class="muted">Termine aus dem Stundenplan</p></section></div>
+    <section><h2>Planzeit</h2><span class="metric">${duration(planTime)}</span><p class="muted">${weeklyAllowance?.count ? 'Termine aus dem Stundenplan und Ermäßigungsstunden' : 'Termine aus dem Stundenplan'}</p></section></div>
     <section><h2 class="section-title">Nach Tätigkeit</h2>${rows || (!unassignedPresence ? '<p class="empty">Keine Arbeitszeit im gewählten Zeitraum.</p>' : '')}
     ${unassignedPresence ? `<div class="row"><strong>Anwesenheit ohne Zuordnung</strong><span>${duration(unassignedPresence)}</span></div>` : ''}
     <p class="muted space">Abgelaufene Wochenplantermine und Vertretungen zählen automatisch. Andere Einzeltermine zählen nach der Erfassung. Überschneidungen zählen in der Arbeitszeit einmal.</p></section>${balanceView()}`;
 }
 function settingsView() {
-  return heading('Einstellungen')+allowanceSettings()+`<section><h2 class="section-title">Deine Daten</h2><p>Lehrzeit speichert Einträge, Stundenplan und Dienstort in diesem Browser. Beim Löschen der Website-Daten gehen die Einträge verloren. Sichere deine Daten bei Bedarf in „Auf meinem iPad“.</p><div class="actions space">${button('Sicherung laden','restore')}${button('Sicherung speichern','export')}</div></section>
-  <section><h2 class="section-title">Dienstort</h2><p>${data.school ? 'Dienstort gespeichert.' : 'Am Schulstandort kannst du den aktuellen Standort als Dienstort speichern.'} Bei geöffneter App kann Lehrzeit prüfen, ob du außerhalb bist, und dir die Frage „Arbeitest du gerade?“ stellen. Anwesenheit startest und beendest du manuell.</p><div class="actions space">${button('Aktuellen Standort speichern','school')}${data.school ? button('Standort prüfen','check')+button('Dienstort entfernen','unSchool','','danger') : ''}</div></section>`;
+  return heading('Einstellungen')+allowanceSettings()+`<section><h2 class="section-title">Deine Daten</h2><p>Lehrzeit speichert Einträge und Stundenplan in diesem Browser. Beim Löschen der Website-Daten gehen die Einträge verloren. Sichere deine Daten bei Bedarf in „Auf meinem iPad“.</p><div class="actions space">${button('Sicherung laden','restore')}${button('Sicherung speichern','export')}</div></section>
+`;
 }
 function render() {
   cancelGridSelection();
@@ -839,37 +830,6 @@ function validBackup(db) {
     [presence,'work'].every(type => db.entries.filter(e => e.end === null &&
       (e.kind === presence) === (type === presence)).length <= 1);
 }
-function locate(handle, showError = true) {
-  if (!navigator.geolocation) {
-    if (showError) note('Standort ist hier nicht verfügbar.');
-    return;
-  }
-  navigator.geolocation.getCurrentPosition(({coords}) => handle(coords), () => {
-    if (showError) note('Der Standort konnte nicht ermittelt werden. Prüfe die Standortfreigabe für Safari.');
-  }, {enableHighAccuracy:true,timeout:10000,maximumAge:30000});
-}
-function distance(lat1,lon1,lat2,lon2) {
-  const rad = n => n*Math.PI/180;
-  const h = Math.sin(rad(lat2-lat1)/2)**2 + Math.cos(rad(lat1))*Math.cos(rad(lat2))*Math.sin(rad(lon2-lon1)/2)**2;
-  return 12742000*Math.asin(Math.sqrt(Math.min(1,h)));
-}
-function checkSchool(manual = false) {
-  if (!data.school || (!manual && (prompted || timer(data.entries,'work')))) return;
-  locate(coords => {
-    const school = data.school;
-    if (!school || document.hidden) return;
-    const meters = distance(school.lat,school.lon,coords.latitude,coords.longitude);
-    if (meters - coords.accuracy > school.radius && !timer(data.entries,'work') && !dialog.open) {
-      prompted = true;
-      editor.onsubmit = event => event.preventDefault();
-      editor.innerHTML = `<h2>Arbeitest du gerade?</h2><p>Du bist außerhalb des Dienstorts. Wähle eine Tätigkeit, um den Timer zu starten.</p><div class="grid">${activities.map(kind => button(kind,'start',kind)).join('')}</div>${button('Nein','close')}`;
-      dialog.showModal();
-    } else if (manual) {
-      note(meters + coords.accuracy <= school.radius ? 'Du bist am Dienstort.' :
-        meters - coords.accuracy > school.radius ? 'Du bist außerhalb des Dienstorts.' : 'Der Standort ist für diese Prüfung zu ungenau.');
-    }
-  }, manual);
-}
 function deleteItem(collection, value) {
   if (!confirm('Diesen Eintrag löschen?')) return;
   if (save(db => { db[collection] = db[collection].filter(item => item.id !== value); })) dialog.close();
@@ -947,14 +907,6 @@ document.addEventListener('click', event => {
     case 'allowance': allowanceEditor(value); break;
     case 'export': exportBackup(); break;
     case 'restore': restore(); break;
-    case 'school':
-      locate(coords => {
-        if (coords.accuracy > 150) { note('Der Standort ist zu ungenau. Versuch es am Schulstandort erneut.'); return; }
-        if (save(db => { db.school = {lat:coords.latitude,lon:coords.longitude,radius:200}; })) note('Dienstort lokal gespeichert.');
-      });
-      break;
-    case 'check': checkSchool(true); break;
-    case 'unSchool': save(db => { db.school = null; }); break;
   }
 });
 main.addEventListener('change', event => {
@@ -969,12 +921,11 @@ window.addEventListener('storage', event => {
   if (event.key === storageKey && event.newValue) { data = JSON.parse(event.newValue); render(); }
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { prompted = false; cancelGridSelection(); }
-  else { render(); checkSchool(); }
+  if (document.hidden) cancelGridSelection();
+  else render();
 });
 setInterval(updateClock,1000);
 render();
-checkSchool();
 if ('serviceWorker' in navigator) {
   const workers = navigator.serviceWorker;
   let controller = workers.controller;
